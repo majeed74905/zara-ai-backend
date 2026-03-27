@@ -1,0 +1,61 @@
+services:
+  # 1. PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: zara_db
+    restart: always
+    environment:
+      POSTGRES_USER: zara_user
+      POSTGRES_PASSWORD: zara_password
+      POSTGRES_DB: zara_db
+    ports:
+      - "5432:5432" # Optional: Expose if you want to connect via external tool (e.g. DBeaver)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - zara_network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U zara_user -d zara_db" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Python Backend
+  backend:
+    build:
+      context: .
+    container_name: zara_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env # Loads your real secrets
+    environment:
+      # Overwrite DB connection to match docker service
+      - DATABASE_URL=postgresql://zara_user:zara_password@db:5432/zara_db
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - zara_network
+
+  # 3. React Frontend
+  frontend:
+    build:
+      context: ../frontend
+    container_name: zara_frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - zara_network
+
+volumes:
+  postgres_data:
+
+
+networks:
+  zara_network:
+    driver: bridge

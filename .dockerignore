@@ -1,0 +1,37 @@
+# General
+.git
+.gitignore
+.dockerignore
+*.md
+
+# Node
+node_modules
+npm-debug.log
+dist
+frontend/node_modules
+frontend/dist
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env
+venv
+ENV
+env.bak
+venv.bak
+backend/venv
+backend/__pycache__
+
+# Environment variables (Safety first!)
+.env
+.env.local
+.env.*.local
+frontend/.env
+backend/.env
+
+# IDEs
+.vscode
+.idea
