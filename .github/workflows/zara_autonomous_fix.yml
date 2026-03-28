@@ -1,0 +1,68 @@
+name: Zara Autonomous Fix & Security Shield
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  verify-and-heal:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Runtime Code
+      uses: actions/checkout@v3
+
+    - name: Setup Node.js (Frontend)
+      uses: actions/setup-node@v3
+      with:
+        node-version: '20'
+
+    - name: Setup Python (Backend)
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Finalize Deps
+      run: |
+        # Backend
+        cd backend-git
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest httpx
+        # Frontend
+        cd ../frontend-git
+        npm install
+
+    - name: Zero-Error Test Enforcement (Frontend)
+      run: |
+        cd frontend-git
+        npm run build
+        # Fail the build immediately if the frontend has TS errors
+        npx tsc --noEmit
+
+    - name: Strict Verification (Backend pytest)
+      id: backend_test
+      continue-on-error: true # Allow proceeding to trigger L4 Auto-Heal
+      run: |
+        cd backend-git
+        pytest tests/ || exit 1 
+
+    - name: Initialize Autonomous Fix Protocol (If Failure)
+      if: steps.backend_test.outcome == 'failure'
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      run: |
+        echo "🚨 CRITICAL: Pipeline broken. Engaging Zara AI L4 Debug Agent."
+        cd backend-git
+        # In actual deployment, this runs a headless python orchestrator call
+        python -c "
+        import asyncio
+        from app.zara_ai.core.orchestrator import autonomous_loop
+        # Example triggering mechanism grabbing the pytest fail log
+        asyncio.run(autonomous_loop('Github Actions Pytest Runtime Failure', 'Traceback extracted from stdout...'))
+        "
+        
+        # Abort CI/CD push to prevent bad deployment
+        exit 1

@@ -4,7 +4,7 @@ import schedule
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import User, PromptHistory
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ def run_auto_delete_job():
             try:
                 days = user.auto_delete_days
                 if days and days > 0:
-                    cutoff = datetime.utcnow() - timedelta(days=days)
+                    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
                     deleted_count = db.query(PromptHistory).filter(
                         PromptHistory.user_id == user.id,
                         PromptHistory.timestamp < cutoff

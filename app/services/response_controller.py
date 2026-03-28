@@ -68,10 +68,7 @@ def force_language_rewrite(text: str, lang: str) -> str:
 
 def _shaping_fast(text: str) -> str:
     """Zara Fast: Aggressive compression to ensure speed-feel."""
-    lines = text.strip().split("\n")
-    if len(lines) > 6:
-        logger.info("⚡ Trimming Fast response for brevity.")
-        return "\n".join(lines[:5]) + "\n\n(Read more in Pro mode for full details...)"
+    # Let the system prompt handle brevity, as truncating abruptly breaks markdown and sentences.
     return text
 
 def _shaping_pro(text: str) -> str:

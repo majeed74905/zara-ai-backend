@@ -8,7 +8,8 @@ Routes Zara Pro requests to Google Gemini.
   - Timeout: 30 seconds per call
 """
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from app.core.config import settings
 from app.services.models.base_llm import BaseLLMService
 from typing import Dict, Any, Optional
@@ -30,16 +31,15 @@ class GeminiService(BaseLLMService):
 
     def __init__(self):
         if settings.GEMINI_API_KEY:
-            genai.configure(api_key=settings.GEMINI_API_KEY)
-            self.model_name = "models/gemini-1.5-flash"
-            self.model = genai.GenerativeModel(model_name=self.model_name)
+            self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            self.model_name = "gemini-1.5-flash"
             logger.info(f"GeminiService initialized with model: {self.model_name}")
         else:
-            self.model = None
+            self.client = None
             logger.warning("GEMINI_API_KEY not found. Gemini Service disabled.")
 
     def health_check(self) -> bool:
-        return self.model is not None
+        return self.client is not None
 
     def generate(
         self,
@@ -48,25 +48,23 @@ class GeminiService(BaseLLMService):
         context: Optional[Dict[str, Any]] = None,
         temperature: float = _PRO_TEMPERATURE,
     ) -> str:
-        if not self.model:
+        if not self.client:
             raise ValueError("Gemini Service is not configured.")
 
         last_error: Exception = RuntimeError(f"Gemini: no attempts made for model {self.model_name}")
 
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
-                # Create a model instance with system instruction and generation config
-                chat_model = genai.GenerativeModel(
-                    model_name=self.model_name,
-                    system_instruction=system_prompt,
-                    generation_config=genai.GenerationConfig(
+                # Build final prompt (history already embedded in user_prompt by prompt_builder)
+                response = self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_prompt,
                         temperature=temperature,
                         max_output_tokens=2048,
-                    ),
+                    )
                 )
-
-                # Build final prompt (history already embedded in user_prompt by prompt_builder)
-                response = chat_model.generate_content(user_prompt)
 
                 if not response.text:
                     raise ValueError(
@@ -88,7 +86,10 @@ class GeminiService(BaseLLMService):
         logger.error(f"Gemini all {_MAX_RETRIES} attempts failed. Trying combined prompt fallback.")
         try:
             combined = f"{system_prompt}\n\n{user_prompt}"
-            response = self.model.generate_content(combined)
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=combined
+            )
             if response.text:
                 return response.text
         except Exception as fallback_err:

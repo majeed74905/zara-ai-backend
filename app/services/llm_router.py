@@ -152,7 +152,7 @@ class LLMRouter:
 
                 # Success! Log detailed analytics
                 latency_ms = float((time.time() - start_ts) * 1000)
-                approx_tokens = (len(system_prompt.split()) + len(user_prompt.split()) + len(response.split())) // 0.75
+                approx_tokens = int((len(system_prompt.split()) + len(user_prompt.split()) + len(response.split())) / 0.75)
                 
                 log_cost(provider_name, int(approx_tokens))
                 if _cost_log:

@@ -12,6 +12,7 @@ python-jose[cryptography]
 passlib[bcrypt]
 httpx
 google-generativeai
+google-genai
 groq
 openai
 python-multipart

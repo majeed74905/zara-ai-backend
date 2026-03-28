@@ -9,14 +9,13 @@ import pypdf
 import docx
 import pandas as pd
 from PIL import Image
-import google.generativeai as genai
+from google import genai
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Configure Gemini for Image Analysis
-if settings.GOOGLE_API_KEY:
-    genai.configure(api_key=settings.GOOGLE_API_KEY)
+# Configuration happens on client instantiation now
+# if settings.GOOGLE_API_KEY:
 
 async def analyze_upload(file: UploadFile) -> Dict[str, Any]:
     """
@@ -161,13 +160,16 @@ async def analyze_image(content: bytes, mime_type: str) -> Dict[str, Any]:
         }
 
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        client = genai.Client(api_key=settings.GEMINI_API_KEY)
         image = Image.open(io.BytesIO(content))
         
-        response = await model.generate_content_async([
-            "Analyze this image and provide a detailed description of its contents, identifying key elements, text, and context.",
-            image
-        ])
+        response = await client.aio.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=[
+                "Analyze this image and provide a detailed description of its contents, identifying key elements, text, and context.",
+                image
+            ]
+        )
         
         return {
             "type": "image",

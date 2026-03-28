@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from contextlib import asynccontextmanager
 from app.core.config import settings
 from app.api import auth, users, ai, image_generation, analysis, diagram, seo
 from app.database import engine, Base
@@ -9,25 +11,58 @@ from app.models import users as user_models, ai as ai_models, logs as log_models
 # Create tables logic
 Base.metadata.create_all(bind=engine)
 
+# ── Lifespan (replaces deprecated @app.on_event) ─────────────────────────────
+from app.services.background_tasks import start_scheduler
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle startup and shutdown events."""
+    start_scheduler()
+    yield
+    # Shutdown cleanup can go here if needed
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+    openapi_url=f"{settings.API_V1_STR}/openapi.json",
+    lifespan=lifespan,
 )
 
-# Start Background Tasks (Auto-Delete)
-from app.services.background_tasks import start_scheduler
-@app.on_event("startup")
-def startup_event():
-    start_scheduler()
+# CORS — allow specific production origins and localhost for development
+ALLOWED_ORIGINS = [origin.strip() for origin in settings.ALLOWED_ORIGINS.split(",") if origin.strip()]
 
-# CORS configuration - Highly permissive for debugging
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Auto-Healing Runtime Exception Hook ──────────────────────────────────────
+# Defers unhandled exceptions to the L4/L5 Autonomous Intelligence System
+import traceback
+import logging
+
+logger = logging.getLogger(__name__)
+
+@app.middleware("http")
+async def auto_heal_middleware(request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        error_details = traceback.format_exc()
+        logger.error(f"RUNTIME_ERROR: {str(e)}\n{error_details}")
+        
+        # Trigger Autonomous Healing System asynchronously
+        from app.zara_ai.core.orchestrator import autonomous_loop
+        import asyncio
+        asyncio.create_task(autonomous_loop(str(e), error_details))
+        
+        # We don't bubble 500 directly, instead we tell the client we're working on it
+        return JSONResponse(
+            status_code=500, 
+            content={"detail": "Zara AI encountered an error and is autonomously verifying a patch."}
+        )
 
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["auth"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
