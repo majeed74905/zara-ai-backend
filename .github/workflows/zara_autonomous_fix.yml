@@ -31,6 +31,8 @@ jobs:
       continue-on-error: true # Allow proceeding to trigger L4 Auto-Heal
       env:
         PYTHONPATH: .
+        SECRET_KEY: "ci_dummy_secret"
+        DATABASE_URL: "sqlite:///./test.db"
       run: |
         pytest tests/ || exit 1 
 
@@ -39,6 +41,8 @@ jobs:
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         PYTHONPATH: .
+        SECRET_KEY: "ci_dummy_secret"
+        DATABASE_URL: "sqlite:///./test.db"
       run: |
         echo "🚨 CRITICAL: Pipeline broken. Engaging Zara AI L4 Debug Agent."
         
