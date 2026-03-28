@@ -1,0 +1,49 @@
+🚀 HOW TO RUN ZARA AI ASSISTS
+===============================
+
+Welcome to the Zara AI Assists ecosystem!
+
+1. SYSTEM PREREQUISITES
+-----------------------
+- Node.js (v18.0+)
+- Python (v3.10+)
+- Graphviz (for AI Architecture Visualization)
+
+2. QUICK START (MANUAL)
+-----------------------
+
+A. BACKEND SETUP (Terminal 1)
+   1. Navigate to the backend folder:
+      cd backend
+   2. Create and activate a virtual environment:
+      python -m venv venv
+      .\venv\Scripts\activate   # (Windows)
+      # source venv/bin/activate  # (Mac/Linux)
+   3. Install dependencies:
+      pip install -r requirements.txt
+   4. Configure .env file in 'backend/' with your API keys.
+   5. Start the server:
+      uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+   
+   Output: You should see "Application startup complete".
+
+B. FRONTEND SETUP (Terminal 2)
+   1. Navigate to the frontend folder:
+      cd frontend
+   2. Install dependencies:
+      npm install
+   3. Start the UI:
+      npm run dev
+   
+   Output: Access the app at http://localhost:3001 (or port shown).
+
+3. DOCKER START (OPTIONAL)
+--------------------------
+1. Navigate to the backend folder (where docker-compose.yml is now located):
+   cd backend
+2. Run:
+   docker-compose up --build
+
+4. DOCUMENTATION
+----------------
+Detailed documentation, including Architecture, Deployment, and Testing guides, can be found in the 'docs/' folder.
