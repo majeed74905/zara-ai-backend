@@ -29,6 +29,8 @@ jobs:
     - name: Strict Verification (Backend pytest)
       id: backend_test
       continue-on-error: true # Allow proceeding to trigger L4 Auto-Heal
+      env:
+        PYTHONPATH: .
       run: |
         pytest tests/ || exit 1 
 
@@ -36,12 +38,16 @@ jobs:
       if: steps.backend_test.outcome == 'failure'
       env:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        PYTHONPATH: .
       run: |
         echo "🚨 CRITICAL: Pipeline broken. Engaging Zara AI L4 Debug Agent."
-
+        
         # In actual deployment, this runs a headless python orchestrator call
         python -c "
         import asyncio
+        import sys
+        import os
+        sys.path.append(os.getcwd())
         from app.zara_ai.core.orchestrator import autonomous_loop
         # Example triggering mechanism grabbing the pytest fail log
         asyncio.run(autonomous_loop('Github Actions Pytest Runtime Failure', 'Traceback extracted from stdout...'))
