@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     GOOGLE_CALLBACK_URL: Optional[str] = None
     FRONTEND_URL: str = "https://zara-ai-assists.netlify.app/"
     
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000,https://zara-ai-assists.netlify.app,https://my-project-5u48.onrender.com"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:5173,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:5173,http://127.0.0.1:8000,https://zara-ai-assists.netlify.app,https://my-project-5u48.onrender.com"
     
     # Use field aliases or post-init to ensure GEMINI/GOOGLE/API_KEY are bridged
     GOOGLE_API_KEY: Optional[str] = None

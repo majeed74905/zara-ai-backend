@@ -77,3 +77,12 @@ app.include_router(reports.router, prefix=f"{settings.API_V1_STR}/reports", tags
 @app.get("/")
 def root():
     return {"message": "Welcome to Zara AI Backend"}
+
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "ok",
+        "service": "Zara AI Backend",
+        "version": "1.0.0"
+    }
