@@ -2,15 +2,19 @@ import os
 from dotenv import load_dotenv
 load_dotenv(".env", override=True)
 
-# Verify HTTPS with the operating system's certificate store instead of only certifi's bundle.
-# Without this, machines whose antivirus/proxy re-signs HTTPS traffic (trusted by Windows,
-# unknown to certifi) fail every AI provider call with CERTIFICATE_VERIFY_FAILED.
-# Must run before any provider SDK client is created.
-try:
-    import truststore
-    truststore.inject_into_ssl()
-except ImportError:
-    pass
+# On Windows dev machines, verify HTTPS with the OS certificate store instead of only certifi's
+# bundle. Machines whose antivirus/proxy re-signs HTTPS traffic (trusted by Windows, unknown to
+# certifi) otherwise fail every AI provider call with CERTIFICATE_VERIFY_FAILED.
+# Linux servers (Render) keep certifi — their system CA store may be minimal.
+# Override with ZARA_USE_OS_TRUSTSTORE=true/false. Must run before any provider client is created.
+import sys
+_use_os_truststore = os.getenv("ZARA_USE_OS_TRUSTSTORE", "true" if sys.platform == "win32" else "false").strip().lower() == "true"
+if _use_os_truststore:
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+    except ImportError:
+        pass
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
