@@ -36,7 +36,7 @@ async def analyze_upload(file: UploadFile) -> Dict[str, Any]:
             
         # 2. PDF
         if filename.endswith('.pdf') or content_type == 'application/pdf':
-            return analyze_pdf(content)
+            return await analyze_pdf(content)
             
         # 3. WORD DOCUMENTS
         if filename.endswith('.docx') or content_type == 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
@@ -109,21 +109,73 @@ async def analyze_zip(content: bytes) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"Zip extraction failed: {str(e)}", "status": "failed"}
 
-def analyze_pdf(content: bytes) -> Dict[str, Any]:
+async def analyze_pdf(content: bytes) -> Dict[str, Any]:
+    """
+    Extract content from a PDF.
+    Fast path: pypdf text extraction (digital PDFs).
+    Fallback: if little/no text is found (scanned or image-based PDF / forms),
+    use Gemini's native PDF understanding (OCR + visual reading) for an accurate result.
+    """
+    extracted_text = ""
+    page_count = 0
     try:
         reader = pypdf.PdfReader(io.BytesIO(content))
-        text = ""
-        for page in reader.pages[:10]: # Analyze first 10 pages to save time
-            text += page.extract_text() + "\n"
-        
+        page_count = len(reader.pages)
+        for page in reader.pages[:15]:  # first 15 pages to keep it fast
+            extracted_text += (page.extract_text() or "") + "\n"
+    except Exception as e:
+        logger.warning(f"pypdf extraction failed: {e}")
+
+    cleaned = extracted_text.strip()
+
+    # Fast path: real text was extracted (digital PDF)
+    if len(cleaned) >= 120:
         return {
             "type": "pdf",
-            "summary": text[:10000],
-            "page_count": len(reader.pages),
-            "status": "success"
+            "summary": cleaned[:12000],
+            "page_count": page_count,
+            "status": "success",
+            "extraction": "text",
         }
-    except Exception as e:
-        return {"error": f"PDF parsing failed: {str(e)}", "status": "failed"}
+
+    # Fallback: scanned/image-based PDF → read it with Gemini (handles OCR + layout)
+    if settings.GEMINI_API_KEY:
+        try:
+            from google.genai import types
+            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            pdf_part = types.Part.from_bytes(data=content, mime_type="application/pdf")
+            response = await client.aio.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=[
+                    (
+                        "Read this PDF carefully — it may be scanned, handwritten, or a filled form. "
+                        "Extract and clearly lay out ALL meaningful content: document type and purpose, "
+                        "every field with its value, names, dates, ID numbers, tables, and any notable details. "
+                        "Preserve the document's structure. Be thorough and accurate; do not invent anything."
+                    ),
+                    pdf_part,
+                ],
+            )
+            vision_text = (response.text or "").strip()
+            if vision_text:
+                return {
+                    "type": "pdf",
+                    "summary": vision_text[:12000],
+                    "page_count": page_count,
+                    "status": "success",
+                    "extraction": "vision",
+                }
+        except Exception as e:
+            logger.error(f"Gemini PDF vision analysis failed: {e}")
+
+    # Last resort
+    return {
+        "type": "pdf",
+        "summary": cleaned or "No extractable text found (likely a scanned PDF without OCR support).",
+        "page_count": page_count,
+        "status": "success" if cleaned else "partial",
+        "extraction": "none",
+    }
 
 def analyze_docx(content: bytes) -> Dict[str, Any]:
     try:

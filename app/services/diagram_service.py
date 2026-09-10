@@ -66,6 +66,9 @@ async def render_diagram(schema: DiagramSchema, format: str = "png") -> bytes:
     """
     Renders diagram using the 'dot' command line tool.
     """
+    if format not in ("png", "svg"):
+        raise ValueError(f"Unsupported format '{format}'. Only 'png' and 'svg' are supported.")
+
     dot_content = json_to_dot(schema)
     temp_id = str(uuid.uuid4())
     dot_file = f"temp_{temp_id}.dot"
@@ -87,12 +90,13 @@ async def render_diagram(schema: DiagramSchema, format: str = "png") -> bytes:
                     dot_path = p
                     break
 
-        # Run Graphviz
+        # Run Graphviz with safety timeout
         process = subprocess.run(
             [dot_path, f"-T{format}", dot_file, "-o", out_file],
             capture_output=True,
             text=True,
-            check=True
+            check=True,
+            timeout=10,
         )
         
         with open(out_file, "rb") as f:

@@ -7,14 +7,33 @@ import logging
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+MAX_FILES = 5
+MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
+
 @router.post("/analyze_files")
 async def analyze_files_endpoint(files: List[UploadFile] = File(...)):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
     
+    if len(files) > MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Too many files. Maximum {MAX_FILES} files allowed per request."
+        )
+    
     results = []
     
     for file in files:
+        # Check file size before full processing
+        content_peek = await file.read()
+        if len(content_peek) > MAX_FILE_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{file.filename}' exceeds maximum allowed size of 15MB."
+            )
+        # Reset file pointer for analysis
+        await file.seek(0)
+        
         result = await analyze_upload(file)
         results.append({
             "filename": file.filename,

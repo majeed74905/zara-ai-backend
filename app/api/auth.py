@@ -1,4 +1,5 @@
 from datetime import timedelta, datetime, timezone
+import logging
 import random
 import string
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
@@ -8,7 +9,6 @@ from app.database import get_db
 from app.models import User, EmailVerification, RefreshToken, ActivityLog
 from app.schemas import user as user_schemas, token as token_schemas
 from app.core import security, jwt
-from jose import JWTError
 from app.core.config import settings
 from app.email.service import email_service
 from google.oauth2 import id_token
@@ -16,6 +16,7 @@ from google.auth.transport import requests as google_requests
 import httpx
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 from typing import Optional
 from app.api import deps
@@ -34,7 +35,7 @@ async def google_login_init():
     """Redirects user to Google OAuth login page."""
     if not settings.GOOGLE_CLIENT_ID or not settings.GOOGLE_CALLBACK_URL:
          raise HTTPException(status_code=400, detail="Google OAuth not configured")
-         
+
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": settings.GOOGLE_CALLBACK_URL,
@@ -65,22 +66,22 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
                 "grant_type": "authorization_code",
             },
         )
-        
+
         if token_resp.status_code != 200:
             raise HTTPException(status_code=400, detail="Failed to exchange Google code")
-            
+
         token_data = token_resp.json()
         access_token = token_data.get("access_token")
-        
+
         # 2. Get user info
         user_resp = await client.get(
             "https://www.googleapis.com/oauth2/v3/userinfo",
             headers={"Authorization": f"Bearer {access_token}"}
         )
-        
+
         if user_resp.status_code != 200:
             raise HTTPException(status_code=400, detail="Failed to get user info from Google")
-            
+
         user_data = user_resp.json()
         email = user_data['email']
         full_name = user_data.get('name') or user_data.get('given_name', "")
@@ -102,7 +103,7 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
             log = ActivityLog(user_id=user.id, action="REGISTER_GOOGLE", details="User registered via Google Callback")
         else:
             log = ActivityLog(user_id=user.id, action="LOGIN_GOOGLE", details="User logged in via Google Callback")
-        
+
         db.add(log)
         db.commit()
 
@@ -110,7 +111,7 @@ async def google_callback(code: str, db: Session = Depends(get_db)):
         app_access_token = jwt.create_access_token(
             subject=user.id, expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         )
-        
+
         # 5. Redirect to frontend with token
         from fastapi.responses import RedirectResponse
         frontend_redirect_url = f"{settings.FRONTEND_URL}/auth/success?token={app_access_token}&email={email}"
@@ -128,17 +129,18 @@ async def google_login_post(
                 "https://www.googleapis.com/oauth2/v3/userinfo",
                 headers={"Authorization": f"Bearer {login_in.token}"}
             )
-            
+
             if resp.status_code != 200:
                 try:
                     idinfo = id_token.verify_oauth2_token(
-                        login_in.token, 
-                        google_requests.Request(), 
+                        login_in.token,
+                        google_requests.Request(),
                         settings.GOOGLE_CLIENT_ID
                     )
                     user_data = idinfo
                 except Exception as ve:
-                    raise HTTPException(status_code=400, detail=f"Invalid Google token: {str(ve)}")
+                    logger.warning(f"Google token verification failed: {ve}")
+                    raise HTTPException(status_code=400, detail="Invalid Google token")
             else:
                 user_data = resp.json()
 
@@ -158,12 +160,12 @@ async def google_login_post(
             db.add(user)
             db.commit()
             db.refresh(user)
-        
+
         app_access_token = jwt.create_access_token(
             subject=user.id, expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         )
         refresh_token = jwt.create_refresh_token(subject=user.id)
-        
+
         db_token = RefreshToken(
             user_id=user.id,
             token=refresh_token,
@@ -171,27 +173,28 @@ async def google_login_post(
         )
         db.add(db_token)
         db.commit()
-        
+
         return {
-            "access_token": app_access_token, 
+            "access_token": app_access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
             "email": email
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid Google token: {str(e)}")
+        logger.warning(f"Google login failed: {e}")
+        raise HTTPException(status_code=400, detail="Invalid Google token")
 
 
 # Helper to generate verification token
 def create_verification_token(user_id: int) -> str:
-    return jwt.create_access_token(
-        subject=user_id, 
-        expires_delta=timedelta(minutes=15) # Short-lived 15 mins
-    )
+    # Single-purpose token: accepted only by /verify-email, never as an API access token
+    return jwt.create_purpose_token(user_id, jwt.EMAIL_VERIFY, minutes=15)
 
 @router.post("/register")
 async def register(
-    user_in: user_schemas.UserCreate, 
+    user_in: user_schemas.UserCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
@@ -201,7 +204,7 @@ async def register(
             status_code=400,
             detail="The user with this username already exists in the system.",
         )
-    
+
     user = User(
         email=user_in.email,
         hashed_password=security.get_password_hash(user_in.password),
@@ -214,7 +217,7 @@ async def register(
 
     # Generate Magic Link Token
     verification_token = create_verification_token(user.id)
-    
+
     # Send Email in background (Updated to send Link)
     background_tasks.add_task(email_service.send_verification_email_link, user.email, verification_token)
 
@@ -222,11 +225,12 @@ async def register(
     log = ActivityLog(user_id=user.id, action="REGISTER", details="User registered, verification link sent")
     db.add(log)
     db.commit()
-    
+
+    # The verification token is delivered ONLY by email — returning it here would let
+    # anyone "verify" an address they don't own.
     return {
         "message": "User registered successfully. Please check your email for verification link.",
-        "user": user, 
-        "token": verification_token
+        "email": user.email,
     }
 
 @router.post("/verify-email")
@@ -235,27 +239,22 @@ def verify_email(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    try:
-        # Decode Token
-        payload = jwt.jwt.decode(verify_in.token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-             raise HTTPException(status_code=400, detail="Invalid token")
-    except JWTError:
+    user_id = jwt.decode_purpose_token(verify_in.token, jwt.EMAIL_VERIFY)
+    if user_id is None:
         raise HTTPException(status_code=400, detail="Invalid or expired verification link")
 
     user = db.query(User).filter(User.id == int(user_id)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     if user.is_verified:
         return {"msg": "Email already verified"}
 
     user.is_verified = True
-    
+
     # Send Welcome Email (Non-blocking via Brevo)
     background_tasks.add_task(email_service.send_welcome_email, user.email, user.full_name or "there")
-    
+
     log = ActivityLog(user_id=user.id, action="EMAIL_VERIFIED", details="Email verified successfully via Link")
     db.add(log)
     db.commit()
@@ -271,20 +270,20 @@ def resend_otp(
     user = db.query(User).filter(User.email == email_req.email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     if user.is_verified:
         return {"message": "User is already verified"}
-    
+
     # Generate new Link Token
     verification_token = create_verification_token(user.id)
-    
+
     # Send Email
     background_tasks.add_task(email_service.send_verification_email_link, user.email, verification_token)
-    
+
     log = ActivityLog(user_id=user.id, action="RESEND_VERIFICATION", details="Verification link resent")
     db.add(log)
     db.commit()
-    
+
     return {"message": "Verification link resent successfully"}
 
 @router.post("/magic-link")
@@ -300,21 +299,19 @@ async def request_magic_link(
     if not user:
         # Prevent email enumeration
         return {"message": "If this email is registered, a magic login link has been sent."}
-    
+
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
 
-    # Generate Magic Link Token (15 mins)
-    magic_token = jwt.create_access_token(
-        subject=user.id, expires_delta=timedelta(minutes=15)
-    )
-    
+    # Single-purpose magic-login token (15 mins)
+    magic_token = jwt.create_purpose_token(user.id, jwt.MAGIC_LOGIN, minutes=15)
+
     background_tasks.add_task(email_service.send_magic_link, user.email, magic_token)
-    
+
     log = ActivityLog(user_id=user.id, action="MAGIC_LINK_REQUESTED", details="Magic login link sent")
     db.add(log)
     db.commit()
-    
+
     return {"message": "If this email is registered, a magic login link has been sent."}
 
 @router.post("/magic-login", response_model=token_schemas.Token)
@@ -325,29 +322,21 @@ def magic_login(
     """
     Complete the magic login flow by exchanging token for access token
     """
-    try:
-        # Decode Token
-        payload = jwt.jwt.decode(verify_in.token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-             raise HTTPException(status_code=400, detail="Invalid token")
-    except JWTError:
+    user_id = jwt.decode_purpose_token(verify_in.token, jwt.MAGIC_LOGIN)
+    if user_id is None:
         raise HTTPException(status_code=400, detail="Invalid or expired magic link")
 
     user = db.query(User).filter(User.id == int(user_id)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
 
-    # MAGIC LINK ROTATION: Revoke immediately to prevent link replay
-    # (Assuming token tracking logic exists in DB)
-    
     # Magic link validates email automatically
     if not user.is_verified:
         user.is_verified = True
-    
+
     log = ActivityLog(user_id=user.id, action="MAGIC_LOGIN", details="Successful login via Magic Link")
     db.add(log)
     db.commit()
@@ -355,7 +344,7 @@ def magic_login(
     # Create real tokens
     access_token = jwt.create_access_token(subject=user.id)
     refresh_token = jwt.create_refresh_token(subject=user.id)
-    
+
     # Store refresh token
     db_token = RefreshToken(
         user_id=user.id,
@@ -366,7 +355,7 @@ def magic_login(
     db.commit()
 
     return {
-        "access_token": access_token, 
+        "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer",
         "email": user.email
@@ -375,11 +364,11 @@ def magic_login(
 @router.post("/login", response_model=token_schemas.Token)
 async def login(
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db), 
+    db: Session = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends()
 ):
     user = db.query(User).filter(User.email == form_data.username).first()
-    
+
     # Check if locked
     if user and user.locked_until and user.locked_until > datetime.now(timezone.utc).replace(tzinfo=None):
         raise HTTPException(status_code=400, detail="Account locked. Try again later.")
@@ -387,20 +376,20 @@ async def login(
     if not user or not security.verify_password(form_data.password, user.hashed_password):
         # Handle failed attempts
         if user:
-            user.failed_login_attempts += 1
+            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
             if user.failed_login_attempts >= 5:
                 user.locked_until = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=15)
                 # Should send email warning here
-                
+
                 log = ActivityLog(user_id=user.id, action="ACCOUNT_LOCKED", details="Too many failed attempts")
                 db.add(log)
             else:
                  log = ActivityLog(user_id=user.id, action="LOGIN_FAILED", details="Incorrect password")
                  db.add(log)
             db.commit()
-            
+
         raise HTTPException(status_code=400, detail="Incorrect email or password")
-    
+
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     if not user.is_verified:
@@ -408,14 +397,14 @@ async def login(
 
     user.failed_login_attempts = 0
     user.locked_until = None
-    
+
     # Send Login Alert (Non-blocking via Brevo)
     background_tasks.add_task(email_service.send_login_alert, user.email)
-    
+
     log = ActivityLog(user_id=user.id, action="LOGIN", details="Successful login")
     db.add(log)
     db.commit()
-    
+
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = jwt.create_access_token(
         subject=user.id, expires_delta=access_token_expires
@@ -423,7 +412,7 @@ async def login(
     refresh_token = jwt.create_refresh_token(
         subject=user.id
     )
-    
+
     # Store refresh token
     db_token = RefreshToken(
         user_id=user.id,
@@ -432,9 +421,9 @@ async def login(
     )
     db.add(db_token)
     db.commit()
-    
+
     return {
-        "access_token": access_token, 
+        "access_token": access_token,
         "refresh_token": refresh_token,
         "token_type": "bearer"
     }
@@ -449,54 +438,51 @@ def forgot_password(
     if not user:
         # Return success even if email not found to prevent enumeration
         return {"msg": "If this email exists, a password reset link has been sent."}
-    
-    # Generate a reset token (reusing OTP logic or a specialized token)
-    # For simplicity in this flow, we will generate a 60-min access token
-    # In a stricter system, use a specific 'reset' type token in specific table
-    
-    reset_token = jwt.create_access_token(
-        subject=user.id, expires_delta=timedelta(minutes=15)
-    )
-    
-    # Store token in log or just rely on stateless JWT?
-    # Stateless is fine here as long as we verify the type or claim
-    
+
+    # Single-purpose reset token, delivered ONLY by email. Returning it in this
+    # response would let anyone reset any account's password.
+    reset_token = jwt.create_purpose_token(user.id, jwt.PASSWORD_RESET, minutes=15)
+
     background_tasks.add_task(email_service.send_reset_password_email, user.email, reset_token)
-    
+
     log = ActivityLog(user_id=user.id, action="FORGOT_PASSWORD_REQUEST", details="Reset link requested")
     db.add(log)
     db.commit()
-    
-    return {"msg": "If this email exists, a password reset link has been sent.", "token": reset_token}
+
+    return {"msg": "If this email exists, a password reset link has been sent."}
 
 @router.post("/reset-password")
 def reset_password(
     reset_in: user_schemas.PasswordResetConfirm,
     db: Session = Depends(get_db)
 ):
-    try:
-        payload = jwt.jwt.decode(reset_in.token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-             raise HTTPException(status_code=400, detail="Invalid token")
-    except JWTError:
+    user_id = jwt.decode_purpose_token(reset_in.token, jwt.PASSWORD_RESET)
+    if user_id is None:
         raise HTTPException(status_code=400, detail="Invalid or expired token")
-        
+
     user = db.query(User).filter(User.id == int(user_id)).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
+
     user.hashed_password = security.get_password_hash(reset_in.new_password)
-    
-    # Log global logout (revoke tokens)? 
-    # For now just log usage
+    user.failed_login_attempts = 0
+    user.locked_until = None
+
+    # Sign out other sessions: existing refresh tokens stop working after a reset
+    db.query(RefreshToken).filter(
+        RefreshToken.user_id == user.id, RefreshToken.revoked == False  # noqa: E712
+    ).update({"revoked": True}, synchronize_session=False)
+
     log = ActivityLog(user_id=user.id, action="PASSWORD_RESET", details="Password reset successfully")
     db.add(log)
     db.commit()
-    
+
     return {"msg": "Password updated successfully"}
 
 @router.get("/debug/last-emails")
 async def get_debug_emails():
-    """Developer endpoint to see latest sent email links (for local testing)"""
+    """Developer endpoint to see latest sent email links — local development only."""
+    if not email_service.is_local:
+        # Contains live verification/reset/magic links: never expose outside localhost setups
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
     return {"emails": email_service.get_last_emails()}

@@ -108,21 +108,25 @@ def export_history(
         from fpdf import FPDF
         import tempfile
         
+        def latin1(text: str) -> str:
+            # Core PDF fonts are latin-1 only; non-Latin scripts (Tamil, Hindi...) become '?'
+            return (text or "").encode('latin-1', 'replace').decode('latin-1')
+
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        pdf.cell(200, 10, txt=f"Zara AI Chat History - {current_user.email}", ln=1, align='C')
-        
+        pdf.set_font("Helvetica", size=12)
+        pdf.cell(200, 10, text=latin1(f"Zara AI Chat History - {current_user.email}"), new_x="LMARGIN", new_y="NEXT", align='C')
+
         for item in history:
-            pdf.set_font("Arial", 'B', 10)
-            pdf.multi_cell(0, 10, f"You ({item.timestamp}): {item.prompt}")
-            pdf.set_font("Arial", '', 10)
-            # Sanitize latin-1 issues roughly
-            safe_response = item.response.encode('latin-1', 'replace').decode('latin-1')
-            pdf.multi_cell(0, 10, f"AI: {safe_response}")
+            pdf.set_font("Helvetica", 'B', 10)
+            pdf.multi_cell(0, 10, latin1(f"You ({item.timestamp}): {item.prompt}"))
+            pdf.set_font("Helvetica", '', 10)
+            pdf.multi_cell(0, 10, latin1(f"AI: {item.response or ''}"))
             pdf.ln(5)
-            
-        return Response(content=pdf.output(dest='S').encode('latin-1'), media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=history.pdf"})
+
+        output = pdf.output()
+        pdf_bytes = output.encode('latin-1') if isinstance(output, str) else bytes(output)
+        return Response(content=pdf_bytes, media_type="application/pdf", headers={"Content-Disposition": "attachment; filename=history.pdf"})
     
     else: # TXT default
         content = f"Zara AI Chat History - {current_user.email}\n==========================================\n\n"

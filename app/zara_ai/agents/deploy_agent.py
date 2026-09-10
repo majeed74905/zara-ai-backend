@@ -1,34 +1,24 @@
 import logging
-import subprocess
 import os
 
 logger = logging.getLogger("ZaraAI_DeployAgent")
 
+
 async def deploy_fix(patch_data: str, commit_msg: str = "fix(ai): Autonomous bug resolution sequence"):
     """
-    Simulates or executes a Git operations branch via API/CLI (GitHub PRs).
-    Replaces brute pushing with a Pull Request Flow requiring CI validation.
+    Records an AI-generated patch for human review.
+
+    This agent previously ran `git checkout -b / add . / commit` and, on failure,
+    `git reset --hard` + `git checkout main` in the server's working directory — which
+    could commit unrelated work or destroy uncommitted changes on a developer machine.
+    It now never touches git. Patches are only logged; a human applies them.
     """
-    logger.info("Autonomous Deploy Agent initiating branch migration...")
-    
-    branch_name = "ai-autonomous-fix"
-    try:
-        # 1. Create hotfix branch
-        subprocess.run(["git", "checkout", "-b", branch_name], check=True, capture_output=True)
-        
-        # 2. Add modified files
-        subprocess.run(["git", "add", "."], check=True, capture_output=True)
-        
-        # 3. Commit
-        subprocess.run(["git", "commit", "-m", commit_msg], check=True, capture_output=True)
-        
-        # 4. PR-BASED FLOW (Requires GitHub CLI 'gh' authenticated in environment)
-        logger.info(f"Committed patch to '{branch_name}'. Attempting native PR trigger.")
-        # subprocess.run(["git", "push", "--set-upstream", "origin", branch_name], check=True)
-        # subprocess.run(["gh", "pr", "create", "--title", commit_msg, "--body", "Auto-generated safety patch.", "--reviewer", "majeed74905"], check=True)
-        
-    except Exception as e:
-        logger.error(f"Deploy Agent orchestration failed on git commands: {str(e)}")
-        # Revert
-        subprocess.run(["git", "reset", "--hard"], check=False)
-        subprocess.run(["git", "checkout", "main"], check=False)
+    if os.getenv("ZARA_AUTO_HEAL_ENABLED", "false").strip().lower() != "true":
+        logger.info("Autonomous deploy is disabled (ZARA_AUTO_HEAL_ENABLED is not 'true'). Patch not applied.")
+        return
+
+    preview = (patch_data or "")[:2000]
+    logger.warning(
+        "Autonomous patch generated and held for HUMAN REVIEW (not applied, not committed).\n"
+        f"Suggested commit message: {commit_msg}\n--- patch preview ---\n{preview}"
+    )

@@ -24,7 +24,9 @@ pandas
 pypdf
 pillow
 tabulate
+fpdf2
 schedule
 resend
 waitress
 langdetect
+truststore; python_version >= "3.10"

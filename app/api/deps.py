@@ -6,10 +6,24 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.config import settings
 from app.core import security
+from app.core.jwt import ACCESS
 from app.models import User
 from app.schemas import token as token_schemas
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/login", auto_error=False)
+
+
+def _access_subject(token: str) -> Optional[str]:
+    """
+    Decode a bearer token and return its subject only if it is an ACCESS token.
+    Refresh tokens and single-purpose email tokens must never authenticate requests.
+    """
+    payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    if payload.get("type", ACCESS) != ACCESS:
+        return None
+    user_id = payload.get("sub")
+    return str(user_id) if user_id is not None else None
+
 
 def get_current_user(
     db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
@@ -21,16 +35,15 @@ def get_current_user(
     )
     if not token:
         raise credentials_exception
-        
+
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: str = payload.get("sub")
+        user_id = _access_subject(token)
         if user_id is None:
             raise credentials_exception
-        token_data = token_schemas.TokenPayload(sub=str(user_id))
+        token_data = token_schemas.TokenPayload(sub=user_id)
     except JWTError:
         raise credentials_exception
-    
+
     user = db.query(User).filter(User.id == int(token_data.sub)).first()
     if user is None:
         raise credentials_exception
@@ -59,22 +72,21 @@ def get_current_user_optional(
     """
     if not token:
         return None
-        
+
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        user_id: str = payload.get("sub")
+        user_id = _access_subject(token)
         if user_id is None:
             return None
-        token_data = token_schemas.TokenPayload(sub=str(user_id))
+        token_data = token_schemas.TokenPayload(sub=user_id)
     except (JWTError, Exception):
         # Invalid token or any other error -> Guest Mode
         return None
-    
+
     user = db.query(User).filter(User.id == int(token_data.sub)).first()
     if not user:
         return None
-        
+
     if not user.is_active:
         return None # Inactive users are treated as Guests (or could be blocked, but None is safer for non-blocking)
-        
+
     return user

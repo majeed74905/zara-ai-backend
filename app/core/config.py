@@ -1,3 +1,17 @@
+import os
+from dotenv import load_dotenv
+load_dotenv(".env", override=True)
+
+# Verify HTTPS with the operating system's certificate store instead of only certifi's bundle.
+# Without this, machines whose antivirus/proxy re-signs HTTPS traffic (trusted by Windows,
+# unknown to certifi) fail every AI provider call with CERTIFICATE_VERIFY_FAILED.
+# Must run before any provider SDK client is created.
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
@@ -61,6 +75,8 @@ class Settings(BaseSettings):
             if not self.GOOGLE_API_KEY: self.GOOGLE_API_KEY = effective_key
             if not self.GEMINI_API_KEY: self.GEMINI_API_KEY = effective_key
             if not self.API_KEY: self.API_KEY = effective_key
+            os.environ["GOOGLE_API_KEY"] = effective_key
+            os.environ["GEMINI_API_KEY"] = effective_key
 
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
