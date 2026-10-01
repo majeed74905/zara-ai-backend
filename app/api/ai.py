@@ -35,7 +35,7 @@ from app.services.llm_router import llm_router, get_cost_summary, ProviderRoutin
 from app.services.language_detector import detect_language_profile
 from app.services.prompt_builder import build_system_prompt, build_user_prompt
 from app.services.zara_identity import detect_communication_profile, build_voice_persona_prompt
-from app.services.communication_engine import analyze_turn
+from app.services.communication_engine import analyze_turn, check_reply_quality
 from app.services import response_cache
 from app.services.response_controller import control_response
 from app.core.rate_limiter import rate_limit_check
@@ -256,6 +256,34 @@ def chat_with_ai(
                 module=module,
                 strategy=strategy,
             )
+
+            # One regeneration if the reply is clearly weak (dead-end greeting, far too thin, exact repeat)
+            last_assistant = next((m["content"] for m in reversed(history_messages) if m["role"] == "assistant"), None)
+            retry_instruction = check_reply_quality(response_text, strategy, last_assistant)
+            if retry_instruction and module == "chat":
+                logger.info(f"Reply quality retry: {retry_instruction[:70]}")
+                retry_raw, retry_route = llm_router.route_request_with_meta(
+                    mode=mode,
+                    system_prompt=f"{system_prompt}\n\n## RETRY — YOUR PREVIOUS ATTEMPT WAS REJECTED\n{retry_instruction}",
+                    user_prompt=user_prompt,
+                    context=context,
+                    module=module,
+                    task=task,
+                    deep_thinking=request.deep_thinking,
+                    max_tokens_cap=strategy.max_tokens_cap,
+                    temperature_boost=min(0.4, strategy.temperature_boost + 0.1),
+                )
+                retry_text, retry_control = control_response(
+                    response=retry_raw,
+                    mode=mode,
+                    target_lang=detected_language,
+                    language_profile=lang_profile,
+                    module=module,
+                    strategy=strategy,
+                )
+                if not check_reply_quality(retry_text, strategy, last_assistant):
+                    response_text, route_meta, control_meta = retry_text, retry_route, retry_control
+                control_meta["quality_retry"] = True
         except ProviderRoutingError as e:
             status, detail = _ROUTING_ERROR_RESPONSES.get(e.kind, _ROUTING_ERROR_RESPONSES["unavailable"])
             logger.error(f"LLM routing failed (kind={e.kind}): {e}")

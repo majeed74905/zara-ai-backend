@@ -48,7 +48,14 @@ def test_language_switch_mid_conversation(client, fake_llm):
 
 
 def test_model_switch_keeps_context_but_changes_personality(client, fake_llm):
-    fake_llm.reply = "Makes sense. Check the webhook first, then the DB write."
+    # Long enough that the reply-quality check is satisfied for every depth (no retry call)
+    fake_llm.reply = (
+        "Start with the webhook: confirm the gateway actually calls your endpoint and that it returns 200. "
+        "Check your server logs for the callback, then the handler that writes the order row, then the database "
+        "transaction itself — a rollback or a failed commit there is the usual reason a payment looks successful "
+        "but the status never changes. If the webhook never arrives, the problem is the callback URL or a firewall, "
+        "not your code. Share the exact log line for the callback and I can narrow it down further for you today."
+    )
     history = [{"role": "user", "content": "I'm working on a payment API"}, {"role": "assistant", "content": "Nice!"}]
     q = "What should I check first in the webhook flow to find why the payment status isn't saved?"
     _chat(client, q, model="zara-fast", history=history)
@@ -173,7 +180,7 @@ def test_possessive_language_is_removed_in_care(client, fake_llm):
 
 def test_short_turns_get_small_token_budget(client, fake_llm):
     _chat(client, "thanks bro", model="zara-pro")
-    assert fake_llm.calls[-1]["max_tokens"] <= 700
+    assert fake_llm.calls[-1]["max_tokens"] <= 1500
     _chat(client, "Explain in detail how JWT refresh token rotation works and its security trade-offs", model="zara-pro")
     assert fake_llm.calls[-1]["max_tokens"] >= 3000
 

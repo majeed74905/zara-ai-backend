@@ -169,9 +169,11 @@ NOT THIS MODE: unintelligent, cold, telegraphic, or so short it becomes unhelpfu
 # Per-mode generation settings. These belong to the Zara model identity, NOT to a provider:
 # whichever provider serves the request (primary or fallback) receives the same settings.
 MODE_GENERATION_CONFIG: Dict[str, Dict[str, Any]] = {
-    "fast": {"temperature": 0.75, "max_tokens": 1200, "reasoning_effort": "low"},
+    "fast": {"temperature": 0.75, "max_tokens": 1800, "reasoning_effort": "low"},
     "pro": {"temperature": 0.55, "max_tokens": 3000, "reasoning_effort": "medium"},
-    "eco": {"temperature": 0.5, "max_tokens": 700, "reasoning_effort": "low"},
+    # Eco's brevity comes from its personality, not from a hard token limit: a cut-off answer
+    # is worse than a slightly longer one.
+    "eco": {"temperature": 0.5, "max_tokens": 1500, "reasoning_effort": "low"},
 }
 
 

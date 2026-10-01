@@ -20,7 +20,7 @@ from app.core.rate_limiter import limiter  # noqa: E402
 
 
 class FakeProvider:
-    def __init__(self, name, reply="Hey! 😊", fail_with=None):
+    def __init__(self, name, reply="Hey! 👋 What are you working on today?", fail_with=None):
         self.name = name
         self.reply = reply
         self.fail_with = fail_with

@@ -256,6 +256,8 @@ class ResponseStrategy:
     mode: str = "fast"
     greeting: GreetingSignal = field(default_factory=GreetingSignal)
     temperature_boost: float = 0.0     # a bit more variation for social turns
+    followup_op: Optional[str] = None  # continue | simplify | expand | code | example | why | translate | same_for | fix
+    marks: Optional[int] = None        # "explain X for 8 marks" → exam-style answer
 
     def to_log(self) -> Dict[str, Any]:
         return {
@@ -561,8 +563,45 @@ def _emotional_thread(history: List[Dict[str, str]]) -> Optional[str]:
     return None
 
 
-_TOKEN_CAPS = {"minimal": 400, "short": 700}
+# Budget for short turns. Generous enough that reasoning models (which spend part of the
+# budget thinking) still finish their sentence — truncation is far worse than a few extra tokens.
+_TOKEN_CAPS = {"minimal": 900, "short": 1500}
 _SOCIAL_INTENTS = {"greeting", "checkin_reply", "thanks", "acknowledgement", "goodbye", "small_talk", "affection"}
+
+# Short follow-ups that only make sense against the previous answer
+_FOLLOWUP_OPS: List[Tuple[str, "re.Pattern[str]"]] = [
+    ("continue", re.compile(r"^(?:continue|go on|next|and then\??|more|keep going|then\?|aduthu|mele sollu|aage bolo)\b")),
+    ("simplify", re.compile(r"\b(?:make it simpler|simpler|simplify|easy ?way|in simple words|eli5|explain like i'?m \d+|"
+                            r"easy ah sollu|simple ah sollu|aasan bhasha)\b")),
+    ("expand", re.compile(r"\b(?:more detail|in detail|elaborate|expand|deeper|go deeper|explain more|innum detail)\b")),
+    ("code", re.compile(r"^(?:give|show|write|send)?\s*(?:me\s*)?(?:the\s*)?code\b|\bcode (?:kudu|podu|venum)\b|\bjust code\b")),
+    ("example", re.compile(r"\b(?:give an example|example|for example|sample|oru example)\b")),
+    ("why", re.compile(r"^why\??$|^yen\??$|^kyun\??$|^(?:but )?why (?:is|does|do|so)\b")),
+    ("translate", re.compile(r"\b(?:now in|in tamil|in english|in hindi|translate|tamil la sollu|tamil-?la|hindi me)\b")),
+    ("same_for", re.compile(r"\b(?:same (?:for|in)|do (?:it )?(?:for|in)|now (?:for|in)|and (?:for|in)) [a-z0-9+#.]+\b")),
+    ("fix", re.compile(r"^(?:fix (?:this|it)|debug (?:this|it)|solve (?:this|it)|not working|error varudhu)\b")),
+]
+
+# Academic "N mark" questions set their own depth and structure
+_MARKS_RE = re.compile(r"\b(\d{1,2})\s*[- ]?\s*(?:mark|marks|markku|mark-?la)\b")
+
+
+def _detect_followup_op(text: str) -> Optional[str]:
+    t = (text or "").strip().lower()
+    if len(t.split()) > 8:
+        return None
+    for name, pattern in _FOLLOWUP_OPS:
+        if pattern.search(t):
+            return name
+    return None
+
+
+def _detect_marks(text: str) -> Optional[int]:
+    m = _MARKS_RE.search((text or "").lower())
+    if not m:
+        return None
+    marks = int(m.group(1))
+    return marks if 1 <= marks <= 20 else None
 
 
 def analyze_turn(
@@ -599,6 +638,18 @@ def analyze_turn(
     depth = _decide_depth(intent, depth_text, emotion, mode, module)
     tone = _decide_tone(comm_profile, intent)
 
+    # Short follow-ups ("continue", "give code") and exam-style "N mark" questions reshape depth
+    followup_op = _detect_followup_op(message) if history else None
+    marks = _detect_marks(message)
+    if marks is not None:
+        depth = "short" if marks <= 2 else ("medium" if marks <= 5 else "detailed")
+    elif followup_op == "expand":
+        depth = "detailed"
+    elif followup_op in ("continue", "code", "same_for", "fix") and depth in ("minimal", "short"):
+        depth = _shift(depth, 1)
+    elif followup_op and depth == "minimal":
+        depth = "short"
+
     recent_user = [message] + [
         str(m.get("content", "")) for m in reversed(history) if m.get("role") == "user"
     ][:6]
@@ -628,6 +679,8 @@ def analyze_turn(
         mode=(mode or "fast").lower(),
         greeting=greeting,
         temperature_boost=0.15 if (module == "chat" and intent in _SOCIAL_INTENTS) else 0.0,
+        followup_op=followup_op,
+        marks=marks,
     )
 
 
@@ -672,6 +725,18 @@ _EMOTION_GUIDE = {
     "affectionate": "They're being affectionate. Warm, sweet, grounded.",
 }
 
+_FOLLOWUP_GUIDE = {
+    "continue": "They want you to carry on from your previous answer. Continue where you stopped — don't restart or repeat what you already said.",
+    "simplify": "Re-explain your previous answer in much simpler words: plain language and one everyday comparison. Simpler, not just shorter.",
+    "expand": "Go deeper on your previous answer: the parts you skipped, how it actually works, edge cases, and a concrete example.",
+    "code": "They want the code for what you were just discussing. Give a complete, runnable snippet in the right language, then one line on how to use it.",
+    "example": "Give a concrete, specific example of what you just explained — real values, not placeholders.",
+    "why": "They're asking why about your previous point. Explain the reason/mechanism behind it, briefly.",
+    "translate": "Re-express your previous answer in the language they just named, keeping technical terms as they are.",
+    "same_for": "Do the same thing you just did, for the new subject they named (other language/framework/case).",
+    "fix": "They want the problem you were just discussing fixed. Point at the actual cause and give the corrected version.",
+}
+
 _TONE_GUIDE = {
     "casual": "casual and friendly",
     "professional": "polished and professional — no slang",
@@ -705,7 +770,11 @@ def _greeting_lines(strategy: ResponseStrategy) -> List[str]:
             "right away — don't reply with only a greeting."
         )
     else:
-        lines.append("  • Reply in their language and energy, and keep it short (a few words to one sentence).")
+        lines.append(
+            "  • ONE short line that actually opens a conversation: greet them back in their language, then add a "
+            "brief, genuine invite (what they're working on / what's up / how they are). A bare \"Hey!\" or \"Hello!\" "
+            "alone is NOT acceptable — it feels like a dead end."
+        )
         if g.asks_how_are_you:
             lines.append(
                 "  • They asked how you are: answer briefly and naturally that you're doing good (no 'as an AI' "
@@ -716,10 +785,10 @@ def _greeting_lines(strategy: ResponseStrategy) -> List[str]:
                 "  • It's a casual check-in (what are you doing / did you eat): answer playfully but honestly in a line — "
                 "you're here chatting with them — then ask them back."
             )
-        elif g.types == ["simple"] or g.types == ["playful"]:
-            lines.append("  • A minimal greeting deserves a minimal reply; a light invite ('what's up?') is optional, not required.")
-        else:
-            lines.append("  • A light, natural invite to continue is good (e.g. asking what's up / how they are) — once, not a form.")
+        lines.append(
+            "  • Word the greeting AND the invite differently every time (vary both the opener and the question) — "
+            "never reuse your previous greeting."
+        )
         lines.append(
             "  • Never invent human activities or experiences (eating, drinking coffee, sleeping, sitting somewhere, "
             "going out). Warm and natural, but truthful."
@@ -738,10 +807,13 @@ def _greeting_lines(strategy: ResponseStrategy) -> List[str]:
     if g.already_greeted:
         lines.append("  • The conversation is already going — don't restart it; continue naturally from where you are.")
     lines.append("  • Never: 'How can I assist you?', 'How may I help you today?', 'Welcome to Zara', 'Thank you for greeting me'.")
-    if strategy.warmth <= 1:
-        lines.append("  • Emojis: none or one.")
+    if strategy.tone == "professional" or strategy.warmth == 0:
+        lines.append("  • No emojis — this user writes formally.")
     else:
-        lines.append("  • Emojis: at most one or two that fit — never a string of them.")
+        lines.append(
+            "  • Include exactly ONE emoji that fits the moment (👋 for a hello, 😄 for friendly energy, ☀️ for a "
+            "morning greeting, 🔥 for excitement) — vary it, and never a string of emojis."
+        )
     lines.append(f"  • {_GREETING_MODE_STYLE.get(strategy.mode, _GREETING_MODE_STYLE['fast'])}")
     if strategy.care_mode:
         lines.append("  • Zara Care: a little warmer and more present; affection only at the level they've set.")
@@ -779,7 +851,20 @@ def build_strategy_block(strategy: ResponseStrategy) -> str:
             "ask ONE focused clarifying question (e.g. what exactly happens / the exact error), optionally mentioning the 2 most common causes."
         )
 
-    lines.append(f"- Reply size: {_DEPTH_GUIDE[strategy.depth]}")
+    if strategy.followup_op:
+        lines.append(f"- Follow-up on your last answer: {_FOLLOWUP_GUIDE[strategy.followup_op]}")
+
+    if strategy.marks:
+        lines.append(
+            f"- Exam-style answer for {strategy.marks} marks: write it the way a student is expected to answer — "
+            "a short definition/intro, the key points (numbered or bulleted), a brief example where it helps, and a "
+            f"one-line conclusion. Aim for roughly {max(2, strategy.marks // 2)} solid points; no padding."
+        )
+
+    if strategy.intent == "greeting" and strategy.depth == "minimal":
+        lines.append("- Reply size: ONE short line — greeting + a brief invite. No explanations, no lists.")
+    else:
+        lines.append(f"- Reply size: {_DEPTH_GUIDE[strategy.depth]}")
     lines.append(f"- Tone: {_TONE_GUIDE.get(strategy.tone, 'natural')}. Warmth {_WARMTH_GUIDE[strategy.warmth]}")
 
     if strategy.address_term and strategy.warmth >= 2:
@@ -791,6 +876,51 @@ def build_strategy_block(strategy: ResponseStrategy) -> str:
         quoted = ", ".join(f'"{o}"' for o in strategy.avoid_openers)
         lines.append(f"- Vary your wording: do NOT open the same way as your recent replies ({quoted}).")
     return "\n".join(lines)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REPLY QUALITY CHECK (deterministic; triggers at most one regeneration)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DEAD_END_GREETING_RE = re.compile(r"^(?:hey|hi+|hello+|yo|sup|hey there|hi there)[\s!.,😄😊🙂👋❤️]*$", re.IGNORECASE)
+
+_MIN_WORDS_BY_DEPTH = {"minimal": 3, "short": 12, "medium": 35, "detailed": 70}
+
+
+def check_reply_quality(
+    reply: str,
+    strategy: ResponseStrategy,
+    previous_assistant: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Return an extra instruction when a reply is clearly not good enough (empty, a dead-end
+    greeting, far too thin for the question, or an exact repeat), otherwise None.
+    """
+    text = (reply or "").strip()
+    words = len(text.split())
+    same_as_last = bool(previous_assistant and text.lower() == previous_assistant.strip().lower())
+
+    if not text:
+        return "Your previous attempt was empty. Answer the user's message properly."
+
+    if strategy.intent == "greeting":
+        if _DEAD_END_GREETING_RE.match(text) or words <= 2:
+            return ("Your greeting was a dead end. Greet them back AND add a short, natural invite to continue "
+                    "(what they're working on / what's up / how they are), in their language, with one fitting emoji.")
+        if same_as_last:
+            return "You already sent exactly that greeting. Greet them differently — change both the opener and the invite."
+        return None
+
+    if strategy.intent in _SOCIAL_INTENTS:
+        return None
+
+    if words < _MIN_WORDS_BY_DEPTH.get(strategy.depth, 12):
+        return (f"Your previous attempt was far too thin ({words} words) for this message. Actually answer it, "
+                "concretely and at the depth it deserves.")
+
+    if same_as_last:
+        return "You just sent exactly this reply. Respond to the new message instead of repeating yourself."
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────

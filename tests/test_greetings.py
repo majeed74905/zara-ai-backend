@@ -156,7 +156,8 @@ def test_no_unrelated_topic_retrieval():
 def test_no_forced_affection_or_slang():
     s = _turn("hello", profile={"formality": "neutral"})
     block = build_strategy_block(s)
-    assert s.warmth <= 1 and "Emojis: none or one" in block and "Don't use slang" in block
+    assert s.warmth <= 1 and "exactly ONE emoji" in block and "Don't use slang" in block
+    assert "No emojis" in build_strategy_block(_turn("Good morning. Could you assist me?", profile={"formality": "formal"}))
     assert _turn("hi love", care=True).warmth == 4
     assert _turn("hi love", care=False).warmth == 3
 
