@@ -73,6 +73,24 @@ _SMALL_TALK_RE = re.compile(
     r"kya kar rah[ae]? h(?:o|ai)|kya kar rahi|kya chal raha|kya scene|saaptiya|saptiya|saapteengala|khana khaya)\b"
     r"|சாப்பிட்டீங்களா|சாப்பிட்டியா|என்ன பண்ற|क्या कर रहे|खाना खाया"
 )
+# "let's talk / chat with me" — companionship, not a task
+_WANTS_TO_TALK_RE = re.compile(
+    r"\b(?:pesalama|pesalaam|pesalam|konjam pes[ou]|konjam pesalaam|unna kooda pes|baat karte|baat karo|"
+    r"let'?s (?:talk|chat)|talk to me|wanna talk|chat pannalama|bore adikudhu|bore ah irukku)\b"
+    r"|பேசலாமா|கொஞ்சம் பேசு"
+)
+# A request for help where the actual question hasn't been asked yet
+_UNSTATED_HELP_RE = re.compile(
+    r"\b(?:(?:oru|ore|one|a) doubt(?: irukku| iruku)?|doubt irukku|doubt iruku|question irukku|"
+    r"help pannu|help pannunga|help venum|help panna mudiyuma|konjam help|sahayam venum|"
+    r"madad chahiye|ek doubt hai|sawal hai|can you help|need help|help me)\b"
+    r"|சந்தேகம்|ஒரு டவுட்"
+)
+# Something isn't working / they're stuck — treat as a problem to diagnose
+_PROBLEM_RE = re.compile(
+    r"\b(?:stuck(?: aay?iten| aagiten| ah iruken)?|work aagala|complete aagala|aagala|agala|mudiyala|mudiyale|"
+    r"not working|doesn'?t work|nahi ho raha|nahi chal raha|fail aagudhu|problem irukku|issue irukku)\b"
+)
 _EXPLAIN_START_RE = re.compile(r"^(?:please |kindly |can you |could you )?(?:explain|describe|tell me about|walk me through)\b")
 _QUESTION_START_RE = re.compile(
     r"^(?:what|why|how|when|where|who|which|can|could|would|should|is|are|do|does|did|will|"
@@ -144,6 +162,8 @@ _EMOTION_CUES: Dict[str, List[Tuple["re.Pattern[str]", float]]] = {
          r"bad day|worst day|terrible day|horrible|disappointed|let down|failed|feel low|feeling low)\b", 1.5),
         (r"\b(?:kashtama|kashtam|kastama|kavalai|azhudhen|azhuren|worst ah|bad ah pochu|mood off|mood sari illa|"
          r"manasu sari illa|dukhi|udaas|dukh|rona aa raha|dil toot)\b", 1.5),
+        (r"\b(?:fail aay?iten|fail aagiten|fail aaiten|fail aayitten|rejected|reject aayiduchu|miss aayiduchu|"
+         r"nahi hua|nahi ho paya)\b", 1.6),
         (r"கஷ்டமா|வருத்தம்|அழுத|மனசு சரியில்ல|दुखी|उदास|दुख", 1.5),
         (r"[😢😞😔💔🥺]", 1.0),
         (r"😭", 0.5),
@@ -179,12 +199,17 @@ _EMOTION_CUES: Dict[str, List[Tuple["re.Pattern[str]", float]]] = {
     "excited": _cues(
         (r"\b(?:happy|excited|yay+|yes{3,}|woo+|finally|awesome|amazing|so good|got the job|got selected|"
          r"passed|cleared|it worked|works now|nailed it|best day)\b", 1.5),
-        (r"\b(?:work aayiduchu|aayiduchu|semma happy|romba happy|santhosham|jolly|khush|maza aa gaya|ho gaya yaar)\b", 1.5),
+        # "mudinjiduchu" only means finished — it is NOT good news on its own
+        (r"\b(?:work aayiduchu|aayiduchu|semma happy|romba happy|santhosham|jolly|khush|maza aa gaya|ho gaya yaar|"
+         r"kidaichuchu|kedaichuchu)\b", 1.5),
+        (r"\b(?:first prize|1st prize|got (?:the )?(?:prize|award|job|offer|result)|i won|we won|won the|"
+         r"got selected|got placed|placed in|cracked (?:it|the)|topper|distinction|promoted)\b", 1.8),
         (r"சந்தோஷம்|ஜாலி|खुश|मज़ा", 1.5),
         (r"[🔥🎉🥳🤩]", 0.8),
     ),
     "affectionate": _cues(
-        (r"\b(?:love (?:you|u)|luv (?:you|u)|miss (?:you|u)|i like you|you'?re sweet|so sweet|chellam|kutty)\b", 1.5),
+        (r"\b(?:love (?:you|u)|luv (?:you|u)|miss (?:you|u)|i like you|you'?re sweet|so sweet|chellam|kutty|"
+         r"miss pann?(?:iten|en|uren|ren)|unna miss|nenacha|yaad aa rahi)\b", 1.5),
         (r"[❤💕💖😘🥰🤗]", 0.8),
     ),
 }
@@ -258,6 +283,7 @@ class ResponseStrategy:
     temperature_boost: float = 0.0     # a bit more variation for social turns
     followup_op: Optional[str] = None  # continue | simplify | expand | code | example | why | translate | same_for | fix
     marks: Optional[int] = None        # "explain X for 8 marks" → exam-style answer
+    event_update: Optional[str] = None # "interview mudinjiduchu" → the event they mentioned earlier
 
     def to_log(self) -> Dict[str, Any]:
         return {
@@ -437,13 +463,17 @@ def _detect_intent(text: str, emotion: EmotionSignal, history: List[Dict[str, st
         return "goodbye"
     if _AFFECTION_RE.search(t) and len(words) <= 8 and not _TECH_RE.search(t):
         return "affection"
+    if _WANTS_TO_TALK_RE.search(t) and len(words) <= 10:
+        return "wants_to_talk"
+    if _UNSTATED_HELP_RE.search(t) and len(words) <= 8 and not _TECH_RE.search(t):
+        return "request_help"
     if _SMALL_TALK_RE.search(t) and len(words) <= 8:
         return "small_talk"
     if emotion.emotion == "excited" and emotion.confidence >= 0.6 and not _QUESTION_START_RE.match(t):
         return "celebration"
     if emotion.is_negative and emotion.confidence >= 0.6 and emotion.emotion != "confused" and not _TECH_RE.search(t):
         return "emotional_share"
-    if _TECH_RE.search(t):
+    if _TECH_RE.search(t) or _PROBLEM_RE.search(t):
         return "technical"
     if _EXPLAIN_START_RE.match(t) or _DETAIL_REQUEST_RE.search(t):
         return "question"
@@ -477,7 +507,7 @@ def _decide_depth(intent: str, text: str, emotion: EmotionSignal, mode: str, mod
         return "medium"
     if intent == "emotional_share":
         depth = "medium" if emotion.intensity == "high" else "short"
-    elif intent in ("celebration", "small_talk", "follow_up"):
+    elif intent in ("celebration", "small_talk", "follow_up", "wants_to_talk", "request_help"):
         depth = "short"
     elif intent == "technical":
         is_definition = bool(re.match(r"^(?:what is|what's|what are|define|meaning of)\b", t))
@@ -566,7 +596,8 @@ def _emotional_thread(history: List[Dict[str, str]]) -> Optional[str]:
 # Budget for short turns. Generous enough that reasoning models (which spend part of the
 # budget thinking) still finish their sentence — truncation is far worse than a few extra tokens.
 _TOKEN_CAPS = {"minimal": 900, "short": 1500}
-_SOCIAL_INTENTS = {"greeting", "checkin_reply", "thanks", "acknowledgement", "goodbye", "small_talk", "affection"}
+_SOCIAL_INTENTS = {"greeting", "checkin_reply", "thanks", "acknowledgement", "goodbye", "small_talk",
+                   "affection", "wants_to_talk"}
 
 # Short follow-ups that only make sense against the previous answer
 _FOLLOWUP_OPS: List[Tuple[str, "re.Pattern[str]"]] = [
@@ -584,6 +615,12 @@ _FOLLOWUP_OPS: List[Tuple[str, "re.Pattern[str]"]] = [
 
 # Academic "N mark" questions set their own depth and structure
 _MARKS_RE = re.compile(r"\b(\d{1,2})\s*[- ]?\s*(?:mark|marks|markku|mark-?la)\b")
+
+# "it's done / it's over" — an update about something they told us earlier (exam, interview…)
+_EVENT_DONE_RE = re.compile(
+    r"\b(?:mudinjiduchu|mudinjidichu|mudinjuduchu|mudinjithu|mudinchiduchu|mudichiten|mudichitten|"
+    r"over|finished|done|pochu|aayiduchu|aachu|ho gaya|khatam|ho gayi)\b"
+)
 
 
 def _detect_followup_op(text: str) -> Optional[str]:
@@ -638,6 +675,11 @@ def analyze_turn(
     depth = _decide_depth(intent, depth_text, emotion, mode, module)
     tone = _decide_tone(comm_profile, intent)
 
+    # "interview mudinjiduchu" → they're reporting back on something they told us earlier
+    event_update = None
+    if history and len((message or "").split()) <= 8 and _EVENT_DONE_RE.search((message or "").lower()):
+        event_update = _life_event_snippet(history)
+
     # Short follow-ups ("continue", "give code") and exam-style "N mark" questions reshape depth
     followup_op = _detect_followup_op(message) if history else None
     marks = _detect_marks(message)
@@ -681,6 +723,7 @@ def analyze_turn(
         temperature_boost=0.15 if (module == "chat" and intent in _SOCIAL_INTENTS) else 0.0,
         followup_op=followup_op,
         marks=marks,
+        event_update=event_update,
     )
 
 
@@ -701,6 +744,8 @@ _INTENT_GUIDE = {
     "question": "A question. Answer it directly.",
     "follow_up": "A short follow-up on the ongoing topic. Use the conversation context instead of starting over.",
     "small_talk": "Casual small talk. Keep it light and natural.",
+    "wants_to_talk": "They just want to talk/hang out — not a task. Be warm and present, react like a friend would, and open the door ('sollu, enna nadakudhu?' / 'what's on your mind?'). Don't turn it into a service request.",
+    "request_help": "They're asking for help but haven't said what it's about yet. Say yes warmly and invite the specifics (what they're stuck on, the error, the subject) — don't guess the topic or dump generic advice.",
     "task": "A request or task. Do it well at the right depth.",
     "unclear": "The intent is unclear. Respond briefly and naturally; a short clarifying question is fine.",
 }
@@ -851,6 +896,13 @@ def build_strategy_block(strategy: ResponseStrategy) -> str:
             "ask ONE focused clarifying question (e.g. what exactly happens / the exact error), optionally mentioning the 2 most common causes."
         )
 
+    if strategy.event_update:
+        lines.append(
+            f"- They're reporting back on something they told you earlier: \"{strategy.event_update}\". React to THAT "
+            "specific thing first and never ask \"what?\" as if you forgot. If they haven't said HOW it went, ask them "
+            "warmly — don't assume it went well or badly, and don't congratulate them on an unknown outcome."
+        )
+
     if strategy.followup_op:
         lines.append(f"- Follow-up on your last answer: {_FOLLOWUP_GUIDE[strategy.followup_op]}")
 
@@ -884,6 +936,8 @@ def build_strategy_block(strategy: ResponseStrategy) -> str:
 
 _DEAD_END_GREETING_RE = re.compile(r"^(?:hey|hi+|hello+|yo|sup|hey there|hi there)[\s!.,😄😊🙂👋❤️]*$", re.IGNORECASE)
 
+_EMOJI_RE = re.compile("[\U0001F300-\U0001FAFF☀-➿⬀-⯿❤]")
+
 _MIN_WORDS_BY_DEPTH = {"minimal": 3, "short": 12, "medium": 35, "detailed": 70}
 
 
@@ -902,6 +956,17 @@ def check_reply_quality(
 
     if not text:
         return "Your previous attempt was empty. Answer the user's message properly."
+
+    if len(_EMOJI_RE.findall(text)) > 3:
+        return ("You used too many emojis. Rewrite it with at most one or two that genuinely fit the moment.")
+
+    # In social turns, opening the same way twice feels scripted (greetings especially)
+    if previous_assistant and strategy.intent in _SOCIAL_INTENTS:
+        def opener(s: str) -> str:
+            return " ".join(w.strip(".,!?…").lower() for w in s.split()[:2])
+        if opener(text) and opener(text) == opener(previous_assistant):
+            return ("You opened exactly like your previous reply. Start differently — vary the opening words "
+                    "and the wording of any question.")
 
     if strategy.intent == "greeting":
         if _DEAD_END_GREETING_RE.match(text) or words <= 2:

@@ -6,6 +6,7 @@ from app.services.communication_engine import (
     analyze_turn,
     apply_safety_checks,
     build_strategy_block,
+    check_reply_quality,
     detect_emotion,
 )
 
@@ -207,6 +208,101 @@ def test_crisis_resources_not_duplicated():
     reply = "I'm really glad you told me. Please call Tele-MANAS 14416 or 112 right now."
     text, fixes = apply_safety_checks(reply, s, "English")
     assert text == reply and fixes == []
+
+
+def test_normal_reply_untouched_placeholder():
+    pass
+
+
+# ── Tanglish conversation & Zara Care ────────────────────────────────────────
+
+@pytest.mark.parametrize("msg", [
+    "naan fail aayiten", "code anuppuren", "aprom", "paravala", "bro naan project la stuck aayiten",
+    "nalla irukiya", "purinjiduchu", "pesalama", "miss panniten", "interview mudinjiduchu",
+])
+def test_tanglish_phrases_are_not_english(msg):
+    from app.services.language_detector import detect_language
+    assert detect_language(msg) == "Tanglish"
+
+
+@pytest.mark.parametrize("msg,intent", [
+    ("pesalama", "wants_to_talk"),
+    ("konjam pesu", "wants_to_talk"),
+    ("let's talk", "wants_to_talk"),
+    ("enaku oru doubt", "request_help"),
+    ("bro help pannu", "request_help"),
+    ("project complete aagala", "technical"),
+    ("backend work aagala", "technical"),
+    ("I got first prize", "celebration"),
+])
+def test_new_intents(msg, intent):
+    s = _turn(msg)
+    assert s.intent == intent and s.depth in ("short", "medium")
+
+
+def test_wants_to_talk_is_companionship_not_a_task():
+    block = build_strategy_block(_turn("pesalama", care=True))
+    assert "just want to talk" in block and "Don't turn it into a service request" in block
+
+
+def test_unstated_help_invites_details():
+    block = build_strategy_block(_turn("enaku oru doubt"))
+    assert "haven't said what it's about" in block and "don't guess the topic" in block
+
+
+@pytest.mark.parametrize("msg,emotion", [
+    ("naan fail aayiten", "sad"),
+    ("I got first prize", "excited"),
+    ("miss panniten", "affectionate"),
+])
+def test_tanglish_emotion_cues(msg, emotion):
+    assert detect_emotion(msg).emotion == emotion
+
+
+def test_finishing_something_is_not_automatically_good_news():
+    # "mudinjiduchu" just means finished — Zara must ask, not congratulate
+    assert detect_emotion("interview mudinjiduchu").emotion == "neutral"
+
+
+def test_event_update_links_back_to_what_they_told_us():
+    h = [{"role": "user", "content": "tomorrow interview irukku"},
+         {"role": "assistant", "content": "All the best nanba!"}]
+    s = _turn("interview mudinjiduchu", h, care=True)
+    assert s.event_update == "tomorrow interview irukku"
+    block = build_strategy_block(s)
+    assert "reporting back" in block and "don't assume it went well" in block
+    assert _turn("interview mudinjiduchu", []).event_update is None
+
+
+def test_care_prompt_keeps_tanglish_and_mirrors_address_term():
+    from app.services.prompt_builder import build_system_prompt
+    from app.services.language_detector import detect_language_profile
+    from app.services.zara_identity import detect_communication_profile
+    msg = "nanba today romba bad ah pochu"
+    lang = detect_language_profile(msg)
+    s = _turn(msg, care=True)
+    prompt = build_system_prompt("fast", lang.language, interaction_mode="care",
+                                 comm_style=detect_communication_profile(msg), language_profile=lang, strategy=s)
+    assert "NATURAL TAMIL / TANGLISH WARMTH" in prompt
+    assert "formal literary Tamil" in prompt
+    assert s.address_term == "nanba" and "\"nanba\"" in prompt
+
+
+# ── Naturalness validator ────────────────────────────────────────────────────
+
+def test_validator_rejects_emoji_overload():
+    assert "too many emojis" in (check_reply_quality("Heyy nanba 😄❤️🔥🥺😂", _turn("hi")) or "")
+
+
+def test_validator_rejects_repeated_opener():
+    s = _turn("hello", [{"role": "assistant", "content": "Hey nanba! Enna panra?"}])
+    msg = check_reply_quality("Hey nanba! Eppadi irukka?", s, "Hey nanba! Enna panra?")
+    assert msg and "opened exactly like your previous reply" in msg
+
+
+def test_validator_accepts_a_good_varied_reply():
+    s = _turn("hello", [{"role": "assistant", "content": "Hey nanba! Enna panra?"}])
+    assert check_reply_quality("Heyy! Sollu, enna matter? 😄", s, "Hey nanba! Enna panra?") is None
 
 
 def test_normal_reply_untouched():

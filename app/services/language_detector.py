@@ -246,7 +246,11 @@ _LEXICONS: Dict[str, Dict[str, float]] = {
             "machaan nanba nanbaa nanban dei vaada poda vaanga ponga kelu kelunga paaru paarunga ippo ippa "
             "appo appadiye inga anga enga innaiku inniki naalaiku nethu thaan dhaan dhan maadhiri madhiri "
             "mokka semma sema kalakkal thala thalaiva vanakkam vanakam aana aanaa illa illai illaya illana "
-            "kudunga kudu podunga podu vachu vechu pola kooda mattum solluda epovum eppovum"
+            "kudunga kudu podunga podu vachu vechu pola kooda mattum solluda epovum eppovum "
+            "aayiten aaiten aagiten aayiduchu anuppuren anuppu anupu aprom apram paravala paravaillai "
+            "kidaichuchu kedaichuchu mudinjiduchu mudinjidichu mudichiten mudichitten nadakudhu nadakuthu "
+            "irukiya irukkiya saaptiya saapten purinjitha purinjiduchu purinjiruchu pesalama pesalaam "
+            "sollunga sollada vaanga pathukalam paathukalam seriya"
         ),
         medium="anna akka thambi thangachi mama mame mams avan aval avanga ivan maah chellam kutty",
         weak="da di pa ma la le nu ah va po na",
