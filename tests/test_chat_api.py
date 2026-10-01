@@ -1,5 +1,7 @@
 """Chat Mode end-to-end through the FastAPI route (providers faked, no network)."""
 
+from types import SimpleNamespace
+
 from app.services.llm_router import ProviderRoutingError
 from tests.conftest import FakeProvider
 
@@ -189,6 +191,41 @@ def test_multi_turn_emotional_conversation_keeps_language_and_context(client, fa
     call = fake_llm.calls[-1]
     assert len(call["history"]) == 4
     assert "Continuity" in call["system_prompt"]  # earlier sadness is carried forward
+
+
+def test_live_token_mints_short_lived_token_without_exposing_key(client, monkeypatch):
+    """Live voice must work from the server's key — the browser never sees the real key."""
+    from google import genai
+    captured = {}
+
+    class FakeAuthTokens:
+        def create(self, config):
+            captured["config"] = config
+            return SimpleNamespace(name="auth_tokens/fake-ephemeral")
+
+    class FakeClient:
+        def __init__(self, api_key=None, http_options=None):
+            captured["api_version"] = getattr(http_options, "api_version", None)
+            self.auth_tokens = FakeAuthTokens()
+
+    monkeypatch.setattr(genai, "Client", FakeClient)
+    monkeypatch.setattr("app.api.ai.settings.GEMINI_API_KEY", "server-side-key", raising=False)
+
+    r = client.post("/api/v1/ai/live-token")
+    assert r.status_code == 200
+    body = r.json()
+    from app.api.ai import LIVE_MODEL
+    assert body["token"] == "auth_tokens/fake-ephemeral" and body["model"] == LIVE_MODEL
+    assert "server-side-key" not in r.text
+    cfg = captured["config"]
+    assert cfg.uses == 1 and cfg.live_connect_constraints.model == LIVE_MODEL
+    assert captured["api_version"] == "v1alpha"
+
+
+def test_live_token_without_key_is_unavailable(client, monkeypatch):
+    monkeypatch.setattr("app.api.ai.settings.GEMINI_API_KEY", "", raising=False)
+    r = client.post("/api/v1/ai/live-token")
+    assert r.status_code == 503 and "isn't configured" in r.json()["detail"]
 
 
 def test_voice_persona_care_mode(client):

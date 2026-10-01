@@ -28,6 +28,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from app.api import deps
+from app.core.config import settings
 from app.models import User, PromptHistory
 from app.services import chat_memory
 from app.services.llm_router import llm_router, get_cost_summary, ProviderRoutingError
@@ -384,6 +385,47 @@ def get_voice_persona(
         "interaction_mode": "care" if request.interaction_mode == "care" else "chat",
         "system_instruction": build_voice_persona_prompt(mode, context, care=request.interaction_mode == "care"),
     }
+
+
+# ── Live voice token (keeps the Gemini key on the server) ─────────────────────
+
+LIVE_MODEL = "gemini-2.5-flash-native-audio-preview-12-2025"
+
+
+@router.post("/live-token")
+def create_live_token(
+    _rl=Depends(rate_limit_check(scope="live_token", max_requests=10, window_seconds=60)),
+):
+    """
+    Mint a short-lived, single-use Gemini Live token from the server's GEMINI_API_KEY.
+    The browser connects to Gemini Live with this token, so users never need to paste a key
+    and the real key never reaches the frontend. The token only works for LIVE_MODEL.
+    """
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Live voice isn't configured on the server yet.")
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(
+            api_key=settings.GEMINI_API_KEY,
+            http_options=types.HttpOptions(api_version="v1alpha"),
+        )
+        now = datetime.now(timezone.utc)
+        token = client.auth_tokens.create(
+            config=types.CreateAuthTokenConfig(
+                uses=1,
+                expire_time=now + timedelta(minutes=30),
+                new_session_expire_time=now + timedelta(minutes=2),
+                live_connect_constraints=types.LiveConnectConstraints(model=LIVE_MODEL),
+                http_options=types.HttpOptions(api_version="v1alpha"),
+            )
+        )
+    except Exception as e:
+        logger.error(f"Live token creation failed: {e}")
+        raise HTTPException(status_code=503, detail="Live voice is temporarily unavailable. Please try again in a moment.")
+
+    return {"token": token.name, "model": LIVE_MODEL, "expires_in": 1800}
 
 
 # ── Session Management ────────────────────────────────────────────────────────
