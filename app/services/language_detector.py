@@ -250,7 +250,10 @@ _LEXICONS: Dict[str, Dict[str, float]] = {
             "aayiten aaiten aagiten aayiduchu anuppuren anuppu anupu aprom apram paravala paravaillai "
             "kidaichuchu kedaichuchu mudinjiduchu mudinjidichu mudichiten mudichitten nadakudhu nadakuthu "
             "irukiya irukkiya saaptiya saapten purinjitha purinjiduchu purinjiruchu pesalama pesalaam "
-            "sollunga sollada vaanga pathukalam paathukalam seriya"
+            "sollunga sollada vaanga pathukalam paathukalam seriya "
+            "naan naa summa pesanum pesanumnu pesa venda vendam venum irukena irukenla irukkena "
+            "pannitaan pannitaanga pannita pannitiya panraan panranga panradhu panrathu kettu kekkuren "
+            "kekkaren theriyadhunu avanuku avangaluku enaku enakum unakum nenacha nenaikuren"
         ),
         medium="anna akka thambi thangachi mama mame mams avan aval avanga ivan maah chellam kutty",
         weak="da di pa ma la le nu ah va po na",
@@ -273,7 +276,7 @@ _LEXICONS: Dict[str, Dict[str, float]] = {
         strong=(
             "njan ningal ningalku entha enthu enthaa sugamano sukhamano cheyyam cheyyanam cheythu cheyyu "
             "ariyilla ariyam ariyo evide aanu alle allo illallo kazhicho kazhichu chetta chettan chechi mone "
-            "mole pinne kollam kollaam venda vendi undo poyi vannu ente nte ninte parayu paranju "
+            "mole pinne kollam kollaam vendi undo poyi vannu ente nte ninte parayu paranju "
             "manassilayi manassilayilla"
         ),
         medium="sheri und",
@@ -383,7 +386,10 @@ def _langdetect_latin(text: str) -> Optional[Tuple[str, float]]:
             return None
         top = candidates[0]
         name = LANGUAGE_MAP.get(top.lang)
-        if name and top.prob >= 0.85:
+        # Deliberately strict: on short Latin text langdetect happily returns Dutch/Indonesian
+        # for transliterated Tamil ("interview reject pannitaanga"), which then makes Zara reply
+        # in that language. Only accept a very confident guess.
+        if name and top.prob >= 0.92:
             return name, float(top.prob)
     except Exception as e:
         logger.debug(f"langdetect unavailable/failed: {e}")
@@ -488,7 +494,8 @@ def analyze_text(text: str) -> LanguageProfile:
             decisive=True,
         )
 
-    if scores.content_words >= 3 and eng < 1.0 and best < 1.0:
+    # Needs a real sentence before trusting statistical detection (short Latin text is noise)
+    if scores.content_words >= 5 and eng < 1.0 and best < 1.0:
         guess = _langdetect_latin(natural)
         if guess and guess[0] != "English":
             name, prob = guess

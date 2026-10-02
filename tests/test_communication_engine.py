@@ -214,6 +214,74 @@ def test_normal_reply_untouched_placeholder():
     pass
 
 
+# ── Zara Care: what the person needs right now ───────────────────────────────
+
+@pytest.mark.parametrize("msg,need", [
+    ("summa pesanum, advice venda", "listen_only"),
+    ("i just want to talk, no advice", "listen_only"),
+    ("enaku advice venum", "advice"),
+    ("enna panna nu therila, enna pannalam?", "advice"),
+    ("naan useless ah irukena?", "reassurance"),
+    ("ennaala mudiyala da", "reassurance"),
+    ("today my friend treated me so badly, naan avlo help panniruken but he didn't even care at all", "venting"),
+    ("today romba bad ah pochu", "comfort"),
+    ("something happened but solla mudila", "unclear"),
+    ("I don't know what I'm feeling", "unclear"),
+    ("happy ah iruken but somehow sad ah kooda irukku", "mixed"),
+])
+def test_care_need_detection(msg, need):
+    assert _turn(msg, care=True).care_need == need
+
+
+def test_care_need_only_in_care_mode():
+    assert _turn("today romba bad ah pochu", care=False).care_need is None
+
+
+def test_listen_only_persists_in_the_conversation():
+    h = [{"role": "user", "content": "advice venda da, summa pesanum"},
+         {"role": "assistant", "content": "Seri nanba, sollu."}]
+    assert _turn("en friend enna ignore panran", h, care=True).care_need == "listen_only"
+    # until they ask for advice
+    assert _turn("ippo enna panna?", h, care=True).care_need == "advice"
+
+
+@pytest.mark.parametrize("msg,situation", [
+    ("interview reject pannitaanga", "rejection"),
+    ("naan fail aayiten", "failure"),
+    ("en friend enna betray pannitaan", "friendship"),
+    ("pesurathukku yaarume illa", "loneliness"),
+    ("exam nala romba tension", "academic"),
+    ("naan romba thappu panniten", "guilt"),
+    ("enna pathi enakke kevalama irukku", "shame"),
+])
+def test_situation_detection(msg, situation):
+    assert _turn(msg, care=True).situation == situation
+
+
+def test_emotional_turns_get_short_acknowledging_replies():
+    assert _turn("today romba bad ah pochu", care=True).depth == "short"
+    block = build_strategy_block(_turn("bro today romba bad ah pochu", care=True))
+    assert "Comfort first" in block and "Advice only if they ask" in block
+
+
+def test_listen_only_blocks_advice_in_prompt_and_validator():
+    s = _turn("summa pesanum, advice venda", care=True)
+    assert "No tips, no steps" in build_strategy_block(s)
+    tips = "Here are 5 ways to feel better:\n1. Sleep well\n2. Exercise\n3. Journal\n4. Talk\n5. Breathe"
+    assert "needed to be heard" in (check_reply_quality(tips, s) or "")
+
+
+def test_care_validator_rejects_fake_experience_and_diagnosis():
+    s = _turn("naan fail aayiten", care=True)
+    assert "human experience" in (check_reply_quality("I went through the same thing da, it hurts.", s) or "")
+    assert "label their mental state" in (check_reply_quality("You are clearly depressed about this failure.", s) or "")
+
+
+def test_care_validator_accepts_short_warm_acknowledgement():
+    s = _turn("today romba bad ah pochu", care=True)
+    assert check_reply_quality("Aiyo nanba… enna aachu? Sollu, naan kekkuren.", s) is None
+
+
 # ── Tanglish conversation & Zara Care ────────────────────────────────────────
 
 @pytest.mark.parametrize("msg", [

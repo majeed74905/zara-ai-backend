@@ -36,6 +36,7 @@ from app.services.language_detector import detect_language_profile
 from app.services.prompt_builder import build_system_prompt, build_user_prompt
 from app.services.zara_identity import detect_communication_profile, build_voice_persona_prompt
 from app.services.communication_engine import analyze_turn, check_reply_quality
+from app.services.voice_intelligence import ProsodySignals, build_turn_note, fuse_voice_signals
 from app.services import response_cache
 from app.services.response_controller import control_response
 from app.core.rate_limiter import rate_limit_check
@@ -454,6 +455,67 @@ def create_live_token(
         raise HTTPException(status_code=503, detail="Live voice is temporarily unavailable. Please try again in a moment.")
 
     return {"token": token.name, "model": LIVE_MODEL, "expires_in": 1800}
+
+
+# ── Live voice turn intelligence ──────────────────────────────────────────────
+
+class ProsodyPayload(BaseModel):
+    energy: Optional[float] = None
+    energy_variation: Optional[float] = None
+    speech_rate: Optional[float] = None
+    avg_pause_ms: Optional[float] = None
+    long_pauses: int = 0
+    duration_ms: Optional[float] = None
+    interrupted: bool = False
+    laughter: bool = False
+
+
+class LiveTurnRequest(BaseModel):
+    transcript: str = Field(max_length=4000)
+    model: str = "zara-fast"
+    interaction_mode: Optional[str] = "chat"
+    recent_context: Optional[List[HistoryItem]] = Field(default=None, max_length=50)
+    prosody: Optional[ProsodyPayload] = None
+
+
+@router.post("/live-turn")
+def live_voice_turn(
+    request: LiveTurnRequest,
+    _rl=Depends(rate_limit_check(scope="live_turn", max_requests=120, window_seconds=60)),
+):
+    """
+    Turn one finished spoken turn into a short internal note for the live session.
+    Combines what was said (same engine as chat) with how it was said (prosody).
+    Returns guidance only — no transcript is stored or logged.
+    """
+    text = (request.transcript or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Transcript is empty.")
+
+    history = _sanitize_history(request.recent_context)
+    mode = resolve_mode(request.model, "chat")
+    it_mode = "care" if request.interaction_mode == "care" else "chat"
+
+    lang_profile = detect_language_profile(text, history or None)
+    comm_profile = detect_communication_profile(text, history or None)
+    strategy = analyze_turn(
+        text, history=history, comm_profile=comm_profile,
+        mode=mode, module="chat", interaction_mode=it_mode,
+    )
+    state = fuse_voice_signals(
+        strategy,
+        lang_profile.language,
+        ProsodySignals.from_dict(request.prosody.model_dump() if request.prosody else None),
+        care_mode=(it_mode == "care"),
+    )
+    logger.info("zara_live_turn %s", state.to_log())   # signals only, never the transcript
+
+    return {
+        "note": build_turn_note(state),
+        "language": state.language,
+        "strategy": state.response_strategy,
+        "confidence": state.confidence,
+    }
 
 
 # ── Session Management ────────────────────────────────────────────────────────

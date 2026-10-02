@@ -66,7 +66,8 @@ _GOODBYE_RE = re.compile(
     r"chalo bye|shubh ratri|nalla thoongu)\b"
 )
 _AFFECTION_RE = re.compile(
-    r"\b(?:love (?:you|u)|luv (?:you|u)|miss (?:you|u)|i like you|romba pudikkum|pyaar|i adore you)\b|[❤💕💖😘🥰🤗]"
+    r"\b(?:love (?:you|u)|luv (?:you|u)|miss (?:you|u)|miss pann?(?:iten|en|uren|ren)|unna miss|"
+    r"i like you|romba pudikkum|pyaar|i adore you)\b|[❤💕💖😘🥰🤗]"
 )
 _SMALL_TALK_RE = re.compile(
     r"\b(?:what are you doing|wyd|what'?s new|enna panra|enna panreenga|enna panringa|enna pannitu irukk?\w*|"
@@ -91,6 +92,57 @@ _PROBLEM_RE = re.compile(
     r"\b(?:stuck(?: aay?iten| aagiten| ah iruken)?|work aagala|complete aagala|aagala|agala|mudiyala|mudiyale|"
     r"not working|doesn'?t work|nahi ho raha|nahi chal raha|fail aagudhu|problem irukku|issue irukku)\b"
 )
+# ── Zara Care: what does this person actually need right now? ────────────────
+
+# "just listen, no advice"
+_LISTEN_ONLY_RE = re.compile(
+    r"\b(?:advice ven[dt]a|advice vendam|advice venaam|no advice|don'?t want advice|dont need advice|"
+    r"summa pesanum|just (?:want to )?(?:talk|vent)|i just need to talk|listen pannu|kekka mattum|"
+    r"vent pannanum|sunn?o bas|bas sunna)\b"
+)
+# explicitly asking what to do
+_WANTS_ADVICE_RE = re.compile(
+    r"\b(?:enna panna|enna pannalam|enna pannanum|what should i do|what do i do|advice venum|advice kudu|"
+    r"suggestion|help me decide|guide me|kya karu|kya karna chahiye|solution sollu)\b"
+)
+# self-doubt / worth questions → reassurance, not cheerleading
+_SELF_DOUBT_RE = re.compile(
+    r"\b(?:useless|worthless|good for nothing|waste ah|waste-?a|loser|failure ah|i'?m a failure|"
+    r"naan useless|naan waste|en mela nambikkai illa|no confidence|i can'?t do anything|"
+    r"ennaala mudiyala|mudiyala da|kuch nahi kar sakta)\b"
+)
+# they can't articulate it yet
+_CANT_ARTICULATE_RE = re.compile(
+    r"\b(?:solla mudila|solla mudiyala|therila|theriyala|i don'?t know what i'?m feeling|"
+    r"don'?t know how to (?:say|explain)|can'?t explain|nothing|onnum illa|vidunga|vittudu|"
+    r"samajh nahi aa raha kya|pata nahi)\b"
+)
+# mixed feelings in one message
+_MIXED_FEELINGS_RE = re.compile(
+    r"\b(?:happy .{0,20}(?:but|aana).{0,20}(?:sad|empty|low)|sad .{0,20}(?:but|aana).{0,20}happy|"
+    r"excited .{0,20}(?:but|aana).{0,20}(?:scared|nervous|bayam)|"
+    r"santhosham .{0,20}aana|rendu .{0,15}feeling)\b"
+)
+
+# Situations that need their own tone (spec: failure, rejection, heartbreak, friendship, loneliness…)
+_SITUATIONS: List[Tuple[str, "re.Pattern[str]"]] = [
+    ("rejection", re.compile(r"\b(?:reject(?:ed|ion)?|reject pannit|not selected|didn'?t get (?:the )?(?:job|offer|seat)|"
+                             r"interview (?:la )?fail|resume reject)\b")),
+    ("failure", re.compile(r"\b(?:fail(?:ed)?|fail aay?iten|arrear|backlog|exam (?:la )?fail|flunk|lost the match)\b")),
+    ("breakup", re.compile(r"\b(?:break ?up|broke up|ex |girlfriend|boyfriend|relationship (?:over|problem)|"
+                           r"love failure|she left|he left|pirinjit)\b")),
+    # NOTE: "nanba" alone is just how they address Zara — not a friendship problem
+    ("friendship", re.compile(r"\b(?:friend|friends|bestie|friendship|dost|betray\w*|ignore pann?r\w*|"
+                              r"ignore panr\w*|block pannit\w*|avoid panr\w*)\b")),
+    ("family", re.compile(r"\b(?:amma|appa|parents|family|veetla|ghar (?:me|wale)|mom|dad|brother|sister)\b")),
+    ("loneliness", re.compile(r"\b(?:yaarume illa|yarum illa|alone|lonely|no one to talk|nobody|koi nahi)\b")),
+    ("academic", re.compile(r"\b(?:exam|test|semester|assignment|internal|marks|result|study|padikka|syllabus|viva)\b")),
+    ("career", re.compile(r"\b(?:job|interview|placement|salary|office|work pressure|manager|boss|career|resign)\b")),
+    ("guilt", re.compile(r"\b(?:thappu pann?iten|my fault|en thappu|guilt|galti ki|i hurt (?:him|her|them)|sorry solla)\b")),
+    ("shame", re.compile(r"\b(?:kevalam|kevalama|embarrass|ashamed|sharam|avamanam|face kaata mudiyala)\b")),
+    ("anger", re.compile(r"\b(?:kovam|kobam|angry|furious|rage|gussa|pissed)\b")),
+]
+
 _EXPLAIN_START_RE = re.compile(r"^(?:please |kindly |can you |could you )?(?:explain|describe|tell me about|walk me through)\b")
 _QUESTION_START_RE = re.compile(
     r"^(?:what|why|how|when|where|who|which|can|could|would|should|is|are|do|does|did|will|"
@@ -162,8 +214,12 @@ _EMOTION_CUES: Dict[str, List[Tuple["re.Pattern[str]", float]]] = {
          r"bad day|worst day|terrible day|horrible|disappointed|let down|failed|feel low|feeling low)\b", 1.5),
         (r"\b(?:kashtama|kashtam|kastama|kavalai|azhudhen|azhuren|worst ah|bad ah pochu|mood off|mood sari illa|"
          r"manasu sari illa|dukhi|udaas|dukh|rona aa raha|dil toot)\b", 1.5),
-        (r"\b(?:fail aay?iten|fail aagiten|fail aaiten|fail aayitten|rejected|reject aayiduchu|miss aayiduchu|"
-         r"nahi hua|nahi ho paya)\b", 1.6),
+        (r"\b(?:fail aay?iten|fail aagiten|fail aaiten|fail aayitten|rejected|reject pannit\w*|reject aayiduchu|"
+         r"miss aayiduchu|nahi hua|nahi ho paya)\b", 1.6),
+        # being hurt by someone (betrayal, being ignored, treated badly)
+        (r"\b(?:betray(?:ed)?|betray pannit\w*|backstab\w*|cheated me|treated me (?:so |really )?badly|"
+         r"didn'?t even care|didn'?t care|ignore pannr\w*|ignore panr\w*|ignore pannit\w*|block pannit\w*|"
+         r"dhokha|ignore kar raha)\b", 1.6),
         (r"கஷ்டமா|வருத்தம்|அழுத|மனசு சரியில்ல|दुखी|उदास|दुख", 1.5),
         (r"[😢😞😔💔🥺]", 1.0),
         (r"😭", 0.5),
@@ -183,6 +239,9 @@ _EMOTION_CUES: Dict[str, List[Tuple["re.Pattern[str]", float]]] = {
         (r"\b(?:frustrat\w*|irritat\w*|annoy\w*|fed up|sick of|hate this|wtf|ugh+|argh+|so done|useless|"
          r"keeps failing|again and again|not working again)\b", 1.5),
         (r"\b(?:kadupa|kaduppa|kaduppu|erichal|mokka|waste ah|kadup|gussa|pareshan|dimaag kharab|bakwaas)\b", 1.5),
+        # trying repeatedly and it still fails
+        (r"\b(?:evlo try pann?\w*|ethana thadava|however many times|keeps? failing|still (?:not working|aagala|fail\w*)|"
+         r"baar baar|phir bhi nahi)\b", 1.5),
         (r"[😤😡🤬]", 1.0),
     ),
     "tired": _cues(
@@ -284,6 +343,8 @@ class ResponseStrategy:
     followup_op: Optional[str] = None  # continue | simplify | expand | code | example | why | translate | same_for | fix
     marks: Optional[int] = None        # "explain X for 8 marks" → exam-style answer
     event_update: Optional[str] = None # "interview mudinjiduchu" → the event they mentioned earlier
+    care_need: Optional[str] = None    # listen_only | advice | reassurance | comfort | venting | unclear | mixed
+    situation: Optional[str] = None    # rejection | failure | breakup | friendship | loneliness | academic | ...
 
     def to_log(self) -> Dict[str, Any]:
         return {
@@ -528,6 +589,51 @@ def _decide_depth(intent: str, text: str, emotion: EmotionSignal, mode: str, mod
     return depth
 
 
+def _detect_care_need(text: str, emotion: EmotionSignal, intent: str, history: List[Dict[str, str]]) -> Optional[str]:
+    """
+    What does this person need from Zara right now? Explicit words win; otherwise infer from
+    the emotion and how they're telling it. Returns None when it isn't an emotional turn.
+    """
+    t = (text or "").lower()
+    words = len(t.split())
+
+    if _LISTEN_ONLY_RE.search(t):
+        return "listen_only"
+    # Honour a recent "just listen" for the rest of the conversation
+    for msg in reversed((history or [])[-6:]):
+        if msg.get("role") == "user" and _LISTEN_ONLY_RE.search(str(msg.get("content", "")).lower()):
+            if not _WANTS_ADVICE_RE.search(t):
+                return "listen_only"
+            break
+    if _WANTS_ADVICE_RE.search(t):
+        return "advice"
+    if _MIXED_FEELINGS_RE.search(t):
+        return "mixed"
+    if _SELF_DOUBT_RE.search(t):
+        return "reassurance"
+    if emotion.crisis:
+        return "crisis"
+    if _CANT_ARTICULATE_RE.search(t) and (emotion.is_negative or words <= 8):
+        return "unclear"
+    if emotion.is_negative:
+        return "venting" if words >= 12 else "comfort"
+    if emotion.emotion in ("excited", "affectionate") or intent == "celebration":
+        return "celebrate"
+    if intent in ("emotional_share", "affection", "wants_to_talk"):
+        return "comfort"
+    return None
+
+
+def _detect_situation(text: str, history: Optional[List[Dict[str, str]]] = None) -> Optional[str]:
+    """What is this about — a rejection, a friendship, exams…? Current message first, then recent context."""
+    for source in [text] + [str(m.get("content", "")) for m in reversed((history or [])[-4:]) if m.get("role") == "user"]:
+        low = (source or "").lower()
+        for name, pattern in _SITUATIONS:
+            if pattern.search(low):
+                return name
+    return None
+
+
 def _decide_tone(comm_profile: Dict[str, Any], intent: str) -> str:
     formality = comm_profile.get("formality", "neutral")
     technicality = comm_profile.get("technicality", "general")
@@ -680,6 +786,19 @@ def analyze_turn(
     if history and len((message or "").split()) <= 8 and _EVENT_DONE_RE.search((message or "").lower()):
         event_update = _life_event_snippet(history)
 
+    # Zara Care: what they need, and what it's about
+    care_need = _detect_care_need(message, emotion, intent, history) if care_mode else None
+    situation = _detect_situation(message, history) if care_mode else None
+    # A hurtful situation on its own means they need comfort, even without obvious emotion words
+    if care_mode and care_need is None and situation in (
+        "rejection", "failure", "breakup", "friendship", "loneliness", "guilt", "shame", "anger"
+    ):
+        care_need = "comfort"
+    if care_need in ("listen_only", "comfort", "unclear", "reassurance", "mixed", "celebrate"):
+        depth = "short"          # acknowledge + one gentle question, then let them talk
+    elif care_need == "venting":
+        depth = "short" if emotion.intensity != "high" else "medium"
+
     # Short follow-ups ("continue", "give code") and exam-style "N mark" questions reshape depth
     followup_op = _detect_followup_op(message) if history else None
     marks = _detect_marks(message)
@@ -698,12 +817,15 @@ def analyze_turn(
     warmth = _decide_warmth(recent_user, tone, care_mode)
     thread = _emotional_thread(history) if emotion.emotion == "neutral" else None
     t = (message or "").strip().lower()
+    # Vague = a short complaint with no detail ("payment work aagala"), NOT a short clear
+    # request like "explain JWT" — those get answered, not interrogated.
     vague = (
         module == "chat"
         and intent == "technical"
         and len(t.split()) <= 6
         and "```" not in t
-        and not re.match(r"^(?:what is|what's|what are|define|meaning of)\b", t)
+        and bool(_PROBLEM_RE.search(t))
+        and not re.match(r"^(?:what is|what's|what are|define|meaning of|explain|describe)\b", t)
     )
 
     return ResponseStrategy(
@@ -724,6 +846,8 @@ def analyze_turn(
         followup_op=followup_op,
         marks=marks,
         event_update=event_update,
+        care_need=care_need,
+        situation=situation,
     )
 
 
@@ -768,6 +892,31 @@ _EMOTION_GUIDE = {
     "confused": "They're confused. Reassure ('no worries') and go slowly, one step at a time.",
     "excited": "They're excited. Share the excitement genuinely.",
     "affectionate": "They're being affectionate. Warm, sweet, grounded.",
+}
+
+_CARE_NEED_GUIDE = {
+    "listen_only": "They want to be HEARD, not advised. No tips, no steps, no 'you should'. Acknowledge, stay with them, and let them keep talking.",
+    "venting": "They're venting. Let them. Acknowledge the specific thing that hurt, don't interrupt with solutions, and invite the rest of the story.",
+    "comfort": "Comfort first: acknowledge the feeling tentatively, slow things down, give them room to say more. Advice only if they ask for it.",
+    "reassurance": "They're doubting themselves. Don't cheerlead ('you're amazing!'). Separate this one setback from their worth, specifically and in their own situation.",
+    "advice": "They've asked what to do. Be practical: the single most useful next step first, two or three at most — never a 20-point plan.",
+    "unclear": "They can't put it into words yet. Don't push or interpret for them: one soft opening ('enna aachu?' / 'what's on your mind?') and space to answer.",
+    "mixed": "They're feeling two things at once. Don't flatten it into one emotion — gently name both and ask about each.",
+    "celebrate": "Good news or warmth from them. React FIRST with real energy (match their excitement), then ask about it — don't open with a question or a flat 'congratulations'.",
+}
+
+_SITUATION_GUIDE = {
+    "rejection": "A rejection. Acknowledge the disappointment first — effort going unrewarded stings. 'What next' only if they want it.",
+    "failure": "A failure/setback. Acknowledge before analysing, and never 'failure is the stepping stone to success'.",
+    "breakup": "A relationship hurt. Don't trash the other person, don't say 'forget them' or 'move on'. Understand their side first.",
+    "friendship": "A friendship hurt. Acknowledge it; don't assume the friend's intentions — ask what happened.",
+    "family": "Family conflict. Stay gentle and neutral; don't take sides or label their family.",
+    "loneliness": "Loneliness. Be warm and present; where it fits, gently support real-world connection — never position yourself as their only person.",
+    "academic": "Academic pressure. Acknowledge the pressure before any study plan; no huge schedule dumps.",
+    "career": "Work/career pressure. Acknowledge the stress first; practical help only when invited.",
+    "guilt": "Guilt. Don't judge or pile on. Understand what happened, separate the mistake from their worth, and what can still be repaired.",
+    "shame": "Shame. Be gentle, never 'don't feel that way'. They're judging themselves harshly — unpack it with them.",
+    "anger": "Anger. Stay calm, validate why they're angry, don't amplify it.",
 }
 
 _FOLLOWUP_GUIDE = {
@@ -896,6 +1045,11 @@ def build_strategy_block(strategy: ResponseStrategy) -> str:
             "ask ONE focused clarifying question (e.g. what exactly happens / the exact error), optionally mentioning the 2 most common causes."
         )
 
+    if strategy.care_need in _CARE_NEED_GUIDE:
+        lines.append(f"- What they need right now: {_CARE_NEED_GUIDE[strategy.care_need]}")
+    if strategy.situation in _SITUATION_GUIDE:
+        lines.append(f"- Situation: {_SITUATION_GUIDE[strategy.situation]}")
+
     if strategy.event_update:
         lines.append(
             f"- They're reporting back on something they told you earlier: \"{strategy.event_update}\". React to THAT "
@@ -938,6 +1092,23 @@ _DEAD_END_GREETING_RE = re.compile(r"^(?:hey|hi+|hello+|yo|sup|hey there|hi ther
 
 _EMOJI_RE = re.compile("[\U0001F300-\U0001FAFF☀-➿⬀-⯿❤]")
 
+# Care guardrails: tip-lists when someone needs to be heard, fake shared experience, diagnosis
+_ADVICE_LIST_RE = re.compile(
+    r"^\s*(?:\d+[.)]\s+\w|step \d)|\bhere are (?:\d+|some|a few) (?:ways|tips|steps|things)\b|"
+    r"\b(?:try these|follow these steps|\d+ tips)\b",
+    re.IGNORECASE | re.MULTILINE,
+)
+_BULLET_RE = re.compile(r"(?m)^\s*(?:[-*•]|\d+[.)])\s+\S")
+_FAKE_EXPERIENCE_RE = re.compile(
+    r"(?i)\b(?:i (?:went|have been) through (?:the same|that|this)|i'?ve been there|i know exactly how you feel|"
+    r"i felt the same|me too[,.]? i|i cried|naanum adhe|enakkum appadi thaan nadandhuchu)\b"
+)
+_DIAGNOSIS_RE = re.compile(
+    r"\byou (?:are|'re|have|seem to have)(?:\s+\w+){0,2}\s+(?:depressed|depression|anxious|anxiety disorder|"
+    r"traumati[sz]ed|trauma|bipolar|ocd|adhd)\b|\byou have abandonment issues\b",
+    re.IGNORECASE,
+)
+
 _MIN_WORDS_BY_DEPTH = {"minimal": 3, "short": 12, "medium": 35, "detailed": 70}
 
 
@@ -976,7 +1147,28 @@ def check_reply_quality(
             return "You already sent exactly that greeting. Greet them differently — change both the opener and the invite."
         return None
 
+    # ── Zara Care guardrails ──────────────────────────────────────────────
+    if strategy.care_need:
+        if _FAKE_EXPERIENCE_RE.search(text):
+            return ("You claimed a human experience or certainty you don't have. Say you understand why it hurts "
+                    "instead — never 'I went through the same' or 'I know exactly how you feel'.")
+        if _DIAGNOSIS_RE.search(text):
+            return ("Don't label their mental state. Use tentative wording about how it sounds, not a diagnosis.")
+        if strategy.care_need in ("listen_only", "venting", "comfort", "unclear"):
+            if _ADVICE_LIST_RE.search(text) or len(_BULLET_RE.findall(text)) >= 3:
+                return ("They needed to be heard, not advised. Drop the tips/steps entirely: acknowledge what they "
+                        "said, and ask one gentle question so they can keep talking.")
+            if words > 110:
+                return ("Too long for this moment. Reply with a short acknowledgement and ONE gentle question, "
+                        "then let them talk.")
+
     if strategy.intent in _SOCIAL_INTENTS:
+        return None
+
+    # Short, warm acknowledgements are exactly right in Care — don't force length there
+    if strategy.care_need in ("listen_only", "comfort", "unclear", "venting", "reassurance", "mixed", "celebrate"):
+        if words < 5:
+            return "That was too short to feel like a real reply. Acknowledge what they said and invite them to continue."
         return None
 
     if words < _MIN_WORDS_BY_DEPTH.get(strategy.depth, 12):
