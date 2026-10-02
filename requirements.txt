@@ -5,16 +5,18 @@ pydantic
 pydantic[email]
 pydantic-settings
 email-validator
-sqlalchemy>=2.0
+# 2.1 switched the default postgresql:// driver to psycopg v3 (we ship psycopg2-binary)
+sqlalchemy>=2.0,<2.1
 alembic
 psycopg2-binary
 python-jose[cryptography]
 passlib[bcrypt]
 httpx
+# Upper bounds: production kept installing newer majors than are tested here
 google-generativeai
-google-genai
-groq
-openai
+google-genai>=1.0,<3
+groq>=1.4,<2
+openai>=1.40,<3
 python-multipart
 python-dotenv
 requests
